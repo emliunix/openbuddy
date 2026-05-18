@@ -37,6 +37,13 @@ analysis/   Research notes and upstream explorations
 changes/    Change plans and implementation notes
 ```
 
+## upstream clones for reference
+
+```
+./claude-desktop-buddy/ https://github.com/anthropics/claude-desktop-buddy.git
+./opencode/ https://github.com/anomalyco/opencode.git
+```
+
 ## Conventions
 
 - Python: snake_case, 4 spaces, 100 cols
