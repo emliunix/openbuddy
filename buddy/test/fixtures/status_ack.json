@@ -1,0 +1,1 @@
+{"ack":"status","ok":true,"data":{"name":"Clawd","sec":true,"bat":{"pct":87,"mV":4012,"mA":-120,"usb":true},"sys":{"up":8412,"heap":84200},"stats":{"appr":42,"deny":3,"vel":8,"nap":12,"lvl":5}}}

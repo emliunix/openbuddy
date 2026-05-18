@@ -1,0 +1,35 @@
+# Build outputs
+buddy/build/
+
+# IDE / tooling caches
+buddy/.cache/
+.cache/
+
+# Logs
+buddy.log
+opencode.log
+
+# Upstream reference copies (not owned code)
+claude-desktop-buddy/
+upstream/
+
+# opencode runtime dir (generated)
+opencode/
+
+# Plugin build artifacts
+plugin/node_modules/
+plugin/dist/
+plugin/bundle.cjs
+plugin/bundle.js
+plugin/package-lock.json
+
+# opencode plugin runtime
+.opencode/node_modules/
+
+# Environment / secrets
+.env
+.env.*
+.DS_Store
+
+# Screenshots / scratch
+buddy_window.png

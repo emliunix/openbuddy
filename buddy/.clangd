@@ -1,0 +1,8 @@
+CompileFlags:
+  Add:
+    - -I/opt/homebrew/include/SDL2
+    - -D_THREAD_SAFE
+    - -std=c++20
+  Compiler: clang++
+Index:
+  Background: Build

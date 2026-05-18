@@ -1,0 +1,14 @@
+{
+  "total": 3,
+  "running": 1,
+  "waiting": 1,
+  "msg": "approve: Bash",
+  "entries": ["10:42 git push", "10:41 yarn test", "10:39 reading file..."],
+  "tokens": 184502,
+  "tokens_today": 31200,
+  "prompt": {
+    "id": "req_abc123",
+    "tool": "Bash",
+    "hint": "rm -rf /tmp/foo"
+  }
+}
