@@ -114,11 +114,11 @@ bool StateMachine::on_message(const DaemonMsg& msg) {
 // Periodic tick — returns true if visual state changed
 // ------------------------------------------------------------------
 
-bool StateMachine::on_tick(uint32_t now) {
+bool StateMachine::on_tick(uint64_t now) {
     bool changed = false;
 
     // One-shot timeout (celebrate etc.)
-    if (one_shot_until > 0 && (int32_t)(now - one_shot_until) >= 0) {
+    if (one_shot_until > 0 && (int64_t)(now - one_shot_until) >= 0) {
         active_state = base_state;
         one_shot_until = 0;
         changed = true;
@@ -126,7 +126,7 @@ bool StateMachine::on_tick(uint32_t now) {
 
     // Demo mode auto-cycle — removed
     // Connection timeout (30s)
-    if (connected && (int32_t)(now - last_live_ms) > 30000) {
+    if (connected && (int64_t)(now - last_live_ms) > 30000) {
         connected = false;
         transition_to(P_IDLE);
         status_msg = "No Claude connected";
@@ -146,13 +146,13 @@ bool StateMachine::on_key(int key, bool pressed) {
 
     // Prompt approval (only when prompt active and not yet responded)
     if (current_prompt_ && !help_open && !response_sent) {
-        if (key == SDLK_y) {
+        if (key == SDLK_Y) {
             if (sender_) sender_(PermissionCmd{"permission", "once", current_prompt_->id});
             response_sent = true;
-            stats_on_approval((SDL_GetTicks() - prompt_arrived_ms) / 1000);
+            stats_on_approval((uint32_t)((SDL_GetTicks() - prompt_arrived_ms) / 1000));
             return true;
         }
-        if (key == SDLK_n) {
+        if (key == SDLK_N) {
             if (sender_) sender_(PermissionCmd{"permission", "deny", current_prompt_->id});
             response_sent = true;
             stats_on_denial();
@@ -161,23 +161,23 @@ bool StateMachine::on_key(int key, bool pressed) {
     }
 
     switch (key) {
-        case SDLK_h:
+        case SDLK_H:
             help_open = !help_open;
             return true;
         case SDLK_ESCAPE:
             if (help_open) { help_open = false; return true; }
             return false;
-        case SDLK_a:
+        case SDLK_A:
             display_mode = (display_mode == DISP_INFO) ? DISP_NORMAL : DISP_INFO;
             return true;
-        case SDLK_d:
+        case SDLK_D:
             display_mode = (display_mode == DISP_PET) ? DISP_NORMAL : DISP_PET;
             return true;
-        case SDLK_w:
+        case SDLK_W:
             buddy_next_species();
             buddy_invalidate();
             return true;
-        case SDLK_s:
+        case SDLK_S:
             buddy_prev_species();
             buddy_invalidate();
             return true;

@@ -22,7 +22,7 @@ public:
     bool on_message(const DaemonMsg& msg);
 
     // Periodic tick; returns true if visual state changed.
-    bool on_tick(uint32_t now_ms);
+    bool on_tick(uint64_t now_ms);
 
     // Input; returns true if visual state changed.
     bool on_key(int key, bool pressed);
@@ -38,7 +38,7 @@ public:
 private:
     PersonaState base_state = P_IDLE;
     PersonaState active_state = P_IDLE;
-    uint32_t one_shot_until = 0;
+    uint64_t one_shot_until = 0;
 
     bool help_open = false;
 
@@ -47,10 +47,9 @@ private:
 
 
     bool response_sent = false;
-    uint32_t prompt_arrived_ms = 0;
+    uint64_t prompt_arrived_ms = 0;
 
-    // Connection tracking
-    uint32_t last_live_ms = 0;
+    uint64_t last_live_ms = 0;
     bool connected = false;
 
     // Protocol state

@@ -3,6 +3,7 @@
 ## Todo
 
 - [ ] **Shake support with mouse** — detect rapid mouse movement over the window as a shake gesture
+- [ ] **Persist pet stats** — save mood, energy, fed, level to `state.json` on exit; restore on launch
 
 ## Done
 

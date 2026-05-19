@@ -1,7 +1,7 @@
 #include "mock_transport.h"
 #include <cstdio>
 #include <cstring>
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include "log.h"
 
 // ------------------------------------------------------------------
@@ -257,15 +257,14 @@ void MockTransport::loop() {
         on_msg_(OwnerCmd{"owner", "Felix"});
     }
 
-    uint32_t last_hb = SDL_GetTicks();
+    uint64_t last_hb = SDL_GetTicks();
 
-    // Load initial step (step 0)
     load_step(SCENARIOS[scenario_idx_].steps[step_idx_]);
     step_deadline_ = SDL_GetTicks() + SCENARIOS[scenario_idx_].steps[step_idx_].duration_ms;
 
     while (!stop_) {
         SDL_Delay(50);
-        uint32_t now = SDL_GetTicks();
+        uint64_t now = SDL_GetTicks();
 
         // Heartbeat every 2s
         if (now - last_hb >= 2000) {

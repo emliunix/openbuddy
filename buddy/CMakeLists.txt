@@ -4,7 +4,7 @@ project(openbuddy CXX)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(SDL2 REQUIRED)
+find_package(SDL3 REQUIRED CONFIG REQUIRED COMPONENTS SDL3)
 
 # nlohmann-json installed via brew
 find_package(nlohmann_json REQUIRED)
@@ -32,7 +32,7 @@ add_executable(buddy
 
 target_include_directories(buddy PRIVATE src ${ASIO_INCLUDE_DIR})
 
-target_link_libraries(buddy PRIVATE SDL2::SDL2 nlohmann_json::nlohmann_json)
+target_link_libraries(buddy PRIVATE SDL3::SDL3 nlohmann_json::nlohmann_json)
 
 if (APPLE)
     target_link_libraries(buddy PRIVATE "-framework Cocoa")

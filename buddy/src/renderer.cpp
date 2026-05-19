@@ -26,14 +26,14 @@ void Renderer::fill_sprite(uint16_t c) {
 
 void Renderer::fill_rect(int x, int y, int w, int h, uint16_t c) {
     set_draw_color(c);
-    SDL_Rect r = {x, y, w, h};
+    SDL_FRect r = {(float)x, (float)y, (float)w, (float)h};
     SDL_RenderFillRect(ren_, &r);
 }
 
 void Renderer::draw_rect(int x, int y, int w, int h, uint16_t c) {
     set_draw_color(c);
-    SDL_Rect r = {x, y, w, h};
-    SDL_RenderDrawRect(ren_, &r);
+    SDL_FRect r = {(float)x, (float)y, (float)w, (float)h};
+    SDL_RenderRect(ren_, &r);
 }
 
 void Renderer::fill_round_rect(int x, int y, int w, int h, int rad, uint16_t c) {
@@ -46,19 +46,19 @@ void Renderer::draw_round_rect(int x, int y, int w, int h, int rad, uint16_t c) 
 
 void Renderer::draw_fast_hline(int x, int y, int w, uint16_t c) {
     set_draw_color(c);
-    SDL_RenderDrawLine(ren_, x, y, x + w - 1, y);
+    SDL_RenderLine(ren_, (float)x, (float)y, (float)(x + w - 1), (float)y);
 }
 
 void Renderer::draw_line(int x1, int y1, int x2, int y2, uint16_t c) {
     set_draw_color(c);
-    SDL_RenderDrawLine(ren_, x1, y1, x2, y2);
+    SDL_RenderLine(ren_, (float)x1, (float)y1, (float)x2, (float)y2);
 }
 
 void Renderer::fill_circle(int x, int y, int r, uint16_t c) {
     set_draw_color(c);
     for (int dy = -r; dy <= r; dy++) {
         int dx = (int)sqrtf(r*r - dy*dy);
-        SDL_RenderDrawLine(ren_, x - dx, y + dy, x + dx, y + dy);
+        SDL_RenderLine(ren_, (float)(x - dx), (float)(y + dy), (float)(x + dx), (float)(y + dy));
     }
 }
 
@@ -68,7 +68,7 @@ void Renderer::draw_circle(int x, int y, int r, uint16_t c) {
         float a = i * 3.14159f / 180.0f;
         int px = x + (int)(r * cosf(a));
         int py = y + (int)(r * sinf(a));
-        SDL_RenderDrawPoint(ren_, px, py);
+        SDL_RenderPoint(ren_, (float)px, (float)py);
     }
 }
 
@@ -89,7 +89,7 @@ void Renderer::fill_triangle(int x1, int y1, int x2, int y2, int x3, int y3, uin
         edge(x3, y3, x1, y1);
         if (n == 2) {
             if (xs[0] > xs[1]) { int t = xs[0]; xs[0] = xs[1]; xs[1] = t; }
-            SDL_RenderDrawLine(ren_, xs[0], y, xs[1], y);
+            SDL_RenderLine(ren_, (float)xs[0], (float)y, (float)xs[1], (float)y);
         }
     }
 }
@@ -159,7 +159,7 @@ void Renderer::render_char(char c, int x, int y) {
             int px = x + col * text_size_;
             int py = y + row * text_size_;
             SDL_SetRenderDrawColor(ren_, (fgc >> 24) & 0xFF, (fgc >> 16) & 0xFF, (fgc >> 8) & 0xFF, 255);
-            SDL_Rect rr = {px, py, text_size_, text_size_};
+            SDL_FRect rr = {(float)px, (float)py, (float)text_size_, (float)text_size_};
             SDL_RenderFillRect(ren_, &rr);
         }
     }

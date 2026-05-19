@@ -66,7 +66,7 @@ private:
     // Scenario state
     size_t scenario_idx_ = 0;
     size_t step_idx_ = 0;
-    uint32_t step_deadline_ = 0;
+    uint64_t step_deadline_ = 0;
 
     // Pre-defined scenarios
     static const std::vector<Scenario> SCENARIOS;

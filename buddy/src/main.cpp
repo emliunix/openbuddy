@@ -1,4 +1,4 @@
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
@@ -16,7 +16,7 @@
 
 static const int LOGIC_W = 135;
 static const int LOGIC_H = 240;
-static const int DEFAULT_SCALE = 3;
+static const int DEFAULT_SCALE = 2;
 
 // SDL custom events. Register 2: [0]=timer, [1]=transport
 // Must not use SDL_USEREVENT directly to avoid collision.
@@ -38,13 +38,13 @@ static bool g_needs_render = true;
 // ------------------------------------------------------------------
 
 static bool init_sdl() {
-    if (SDL_Init(SDL_INIT_VIDEO | SDL_INIT_TIMER) != 0) {
+    if (!SDL_Init(SDL_INIT_VIDEO)) {
         LOG_ERROR("SDL_Init: %s", SDL_GetError());
         return false;
     }
 
     Uint32 events = SDL_RegisterEvents(2);
-    if (events == (Uint32)-1) {
+    if (events == 0) {
         LOG_ERROR("SDL_RegisterEvents failed");
         return false;
     }
@@ -53,32 +53,34 @@ static bool init_sdl() {
 
     int window_w = LOGIC_W * g_scale;
     int window_h = LOGIC_H * g_scale;
+    LOG_INFO("[init] default_scale=%d initial_window=%dx%d", g_scale, window_w, window_h);
 
     g_window = SDL_CreateWindow(
         "OpenBuddy",
-        SDL_WINDOWPOS_UNDEFINED, SDL_WINDOWPOS_UNDEFINED,
         window_w, window_h,
-        SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_ALLOW_HIGHDPI | SDL_WINDOW_HIDDEN);
+        SDL_WINDOW_ALWAYS_ON_TOP | SDL_WINDOW_HIDDEN);
     if (!g_window) { LOG_ERROR("SDL_CreateWindow: %s", SDL_GetError()); return false; }
 
-    g_sdl_renderer = SDL_CreateRenderer(g_window, -1, SDL_RENDERER_ACCELERATED);
+    g_sdl_renderer = SDL_CreateRenderer(g_window, NULL);
     if (!g_sdl_renderer) { LOG_ERROR("SDL_CreateRenderer: %s", SDL_GetError()); return false; }
 
-    SDL_RenderSetLogicalSize(g_sdl_renderer, LOGIC_W, LOGIC_H);
+    SDL_SetRenderLogicalPresentation(g_sdl_renderer, LOGIC_W, LOGIC_H, SDL_LOGICAL_PRESENTATION_STRETCH);
 
-    float ddpi, hdpi, vdpi;
-    if (SDL_GetDisplayDPI(0, &ddpi, &hdpi, &vdpi) == 0) {
-        float detected = ddpi / 96.0f;
-        if (detected > 1.5f) {
-            g_scale = (int)(detected + 0.5f);
-            if (g_scale < 2) g_scale = 2;
-            if (g_scale > 6) g_scale = 6;
-            SDL_SetWindowSize(g_window, LOGIC_W * g_scale, LOGIC_H * g_scale);
-        }
+    float scale = SDL_GetWindowDisplayScale(g_window);
+    int iw, ih;
+    SDL_GetWindowSize(g_window, &iw, &ih);
+    LOG_INFO("[init] display_scale=%.2f window_size_after_create=%dx%d", scale, iw, ih);
+    if (scale > 1.5f) {
+        g_scale = (int)(scale + 0.5f);
+        if (g_scale < 2) g_scale = 2;
+        if (g_scale > 6) g_scale = 6;
+        SDL_SetWindowSize(g_window, LOGIC_W * g_scale, LOGIC_H * g_scale);
+        SDL_GetWindowSize(g_window, &iw, &ih);
+        LOG_INFO("[init] adjusted_scale=%d window_size_after_resize=%dx%d", g_scale, iw, ih);
     }
 
     g_renderer = new Renderer(g_sdl_renderer, LOGIC_W, LOGIC_H);
-    SDL_EnableScreenSaver();  // SDL disables screen saver by default; buddy must not hold a wake lock
+    SDL_EnableScreenSaver();
     SDL_ShowWindow(g_window);
     return true;
 }
@@ -107,14 +109,14 @@ static void on_transport_msg(DaemonMsg msg) {
 // Event loop
 // ------------------------------------------------------------------
 
-static Uint32 timer_callback(Uint32, void*) {
+static Uint32 timer_callback(void*, SDL_TimerID, Uint32) {
     SDL_Event e;
     e.type = g_event_timer;
     SDL_PushEvent(&e);
-    return 50;  // 20 Hz logic tick
+    return 50;
 }
 
-static void process_timer(uint32_t now) {
+static void process_timer(uint64_t now) {
     apply_tick(&g_app, now);
     g_needs_render = true;  // always redraw: animation runs every tick regardless of state changes
 }
@@ -145,7 +147,7 @@ int main(int argc, char** argv) {
             log_level = parse_log_level(argv[i] + 12);
     }
 
-    SDL_LogSetPriority(SDL_LOG_CATEGORY_APPLICATION, log_level);
+    SDL_SetLogPriority(SDL_LOG_CATEGORY_APPLICATION, log_level);
 
     if (!init_sdl()) return EXIT_FAILURE;
 
@@ -172,7 +174,7 @@ int main(int argc, char** argv) {
     }
 
     SDL_TimerID timer_id = SDL_AddTimer(50, timer_callback, nullptr);
-    Uint32 start = SDL_GetTicks();
+    Uint64 start = SDL_GetTicks();
     bool running = true;
 
     while (running) {
@@ -180,12 +182,12 @@ int main(int argc, char** argv) {
         if (!SDL_WaitEvent(&e)) continue;
 
         do {
-            if (e.type == SDL_QUIT) { running = false; break; }
-            if (e.type == SDL_KEYDOWN) {
-                if (apply_key(&g_app, e.key.keysym.sym)) g_needs_render = true;
+            if (e.type == SDL_EVENT_QUIT) { running = false; break; }
+            if (e.type == SDL_EVENT_KEY_DOWN) {
+                if (apply_key(&g_app, e.key.key)) g_needs_render = true;
             }
             if (e.type == g_event_timer) {
-                uint32_t now = SDL_GetTicks();
+                uint64_t now = SDL_GetTicks();
                 process_timer(now);
                 if (test_mode && now - start > 3000) { running = false; break; }
             }

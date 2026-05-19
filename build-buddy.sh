@@ -26,14 +26,14 @@ echo "Checking buddy build dependencies..."
 
 check_cmd cmake
 check_cmd brew
-check_brew_pkg sdl2
+check_brew_pkg sdl3
 check_brew_pkg nlohmann-json
 check_brew_pkg asio
 
 if [ "$missing" -ne 0 ]; then
     echo ""
     echo "Install missing dependencies with:"
-    echo "  brew install sdl2 nlohmann-json asio cmake"
+    echo "  brew install sdl3 nlohmann-json asio cmake"
     exit 1
 fi
 

@@ -26,29 +26,29 @@ const char* persona_name(PersonaVariant v);
 // --------------------------------------------------------------------
 
 struct NetworkState {
-    bool     connected       = false;   // true when now - last_live_ms < 30000
-    uint32_t last_live_ms    = 0;
+    bool     connected       = false;
+    uint64_t last_live_ms    = 0;
     uint32_t running         = 0;
     uint32_t waiting         = 0;
     uint32_t total           = 0;
-    bool     completed       = false;   // one-shot from wire; true for one heartbeat after turn finishes
+    bool     completed       = false;
     uint32_t tokens_today    = 0;
     uint32_t tokens_bridge   = 0;
-    char     msg[24]         = {};      // ≤23 chars + NUL
+    char     msg[24]         = {};
     char     lines[8][92]    = {};
     uint8_t  n_lines         = 0;
     uint16_t line_gen        = 0;
-    char     prompt_id[40]   = {};      // empty = no pending prompt
+    char     prompt_id[40]   = {};
     char     prompt_tool[20] = {};
     char     prompt_hint[44] = {};
     bool     response_sent   = false;
-    uint32_t prompt_arrived_ms = 0;
+    uint64_t prompt_arrived_ms = 0;
 };
 
 struct PersonaState {
     PersonaVariant base_state   = P_IDLE;
     PersonaVariant active_state = P_IDLE;
-    uint32_t       anim_until   = 0;    // 0 = no anim timer running
+    uint64_t       anim_until   = 0;
 };
 
 enum DisplayMode { DISP_NORMAL, DISP_PET, DISP_INFO };
@@ -85,7 +85,7 @@ bool apply_message(AppState* app, const DaemonMsg& msg);
 
 // ANIM_TICK handler: recomputes connected, calls select_persona, applies
 // time-of-day rule, expires anim timers. Returns true if visual state changed.
-bool apply_tick(AppState* app, uint32_t now);
+bool apply_tick(AppState* app, uint64_t now);
 
 // Keyboard input. Returns true if visual state changed.
 bool apply_key(AppState* app, int key);

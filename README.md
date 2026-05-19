@@ -1,6 +1,6 @@
 # OpenBuddy
 
-Desktop companion for [OpenCode](https://opencode.ai), ported from [claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy) — an M5StickC firmware pet that reacts to your coding sessions. Runs as a native SDL2 window, connected via TCP to an OpenCode plugin.
+Desktop companion for [OpenCode](https://opencode.ai), ported from [claude-desktop-buddy](https://github.com/anthropics/claude-desktop-buddy) — an M5StickC firmware pet that reacts to your coding sessions. Runs as a native SDL3 window, connected via TCP to an OpenCode plugin.
 
 The original buddy communicates with Claude Desktop over Bluetooth Serial — a bidirectional byte stream. We preserve the same wire protocol over TCP, so the buddy remains protocol-compatible with the upstream firmware.
 
@@ -38,7 +38,7 @@ cp plugin/dist/*.js plugin/dist/*.js.map plugin/dist/*.d.ts ~/.config/opencode/p
 ./build-buddy.sh
 ```
 
-This checks for dependencies (`cmake`, `sdl2`, `nlohmann-json`, `asio`) and builds the binary. If anything is missing, it prints the install command.
+This checks for dependencies (`cmake`, `sdl3`, `nlohmann-json`, `asio`) and builds the binary. If anything is missing, it prints the install command.
 
 Run it:
 

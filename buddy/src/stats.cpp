@@ -55,15 +55,13 @@ uint8_t stats_mood_tier() {
     return (uint8_t)tier;
 }
 
-static uint32_t _wake_ms   = 0;   // millis() at last wake; 0 = unknown (treat as boot)
-static uint8_t  _energy_at_wake = 3;  // upstream starts at 3/5 on boot
+static uint64_t _wake_ms   = 0;
+static uint8_t  _energy_at_wake = 3;
 
-uint8_t stats_energy_tier(uint32_t now_ms) {
-    // Upstream: starts 3/5 on boot; resets to 5/5 on nap end (statsOnWake);
-    // drains 1 tier per 2 hours awake.
+uint8_t stats_energy_tier(uint64_t now_ms) {
     if (_wake_ms == 0) return _energy_at_wake;
-    uint32_t awake_ms = now_ms - _wake_ms;
-    uint32_t drained  = awake_ms / (2UL * 60 * 60 * 1000);  // 1 tier per 2h
+    uint64_t awake_ms = now_ms - _wake_ms;
+    uint64_t drained  = awake_ms / (2ULL * 60 * 60 * 1000);
     int8_t tier = (int8_t)_energy_at_wake - (int8_t)drained;
     return (uint8_t)(tier < 0 ? 0 : tier);
 }
@@ -89,7 +87,7 @@ void stats_on_nap_end(uint32_t seconds) {
     _stats.nap_seconds += seconds;
 }
 
-void stats_on_wake(uint32_t now_ms) {
+void stats_on_wake(uint64_t now_ms) {
     _wake_ms        = now_ms;
     _energy_at_wake = 5;
 }

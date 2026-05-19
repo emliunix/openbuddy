@@ -82,9 +82,9 @@ static const Species* SPECIES_TABLE[] = {
 static const uint8_t N_SPECIES = sizeof(SPECIES_TABLE) / sizeof(SPECIES_TABLE[0]);
 static uint8_t current_species_idx = 0;
 
-static uint32_t tick_count = 0;
-static uint32_t next_tick_at = 0;
-static const uint32_t TICK_MS = 200;
+static uint64_t tick_count = 0;
+static uint64_t next_tick_at = 0;
+static const uint64_t TICK_MS = 200;
 
 static uint8_t last_drawn_state = 0xFF;
 static uint8_t last_drawn_species = 0xFF;
@@ -122,8 +122,8 @@ void buddy_set_peek(bool peek) {
 }
 
 void buddy_tick(uint8_t persona_state) {
-    uint32_t now = SDL_GetTicks();
-    if ((int32_t)(now - next_tick_at) >= 0) {
+    uint64_t now = SDL_GetTicks();
+    if ((int64_t)(now - next_tick_at) >= 0) {
         next_tick_at = now + TICK_MS;
         tick_count++;
     }

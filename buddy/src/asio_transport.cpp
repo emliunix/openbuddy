@@ -1,6 +1,6 @@
 #include "asio_transport.h"
 #include <nlohmann/json.hpp>
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include "log.h"
 
 // Custom SDL event type for transport messages.

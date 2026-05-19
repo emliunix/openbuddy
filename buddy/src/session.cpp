@@ -1,7 +1,7 @@
 #include "session.h"
 #include "stats.h"
 #include "log.h"
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <cstring>
 #include <ctime>
 
@@ -10,8 +10,8 @@
 // Wakes on any non-idle base_state (running/waiting/completed).
 static const uint32_t NAP_IDLE_MS   = 10UL * 60 * 1000;  // 10 minutes
 static bool     _napping        = false;
-static uint32_t _idle_since_ms  = 0;   // when continuous idle began; 0 = not tracking
-static uint32_t _nap_start_ms   = 0;   // when current nap began
+static uint64_t _idle_since_ms  = 0;
+static uint64_t _nap_start_ms   = 0;
 static bool     _tokens_synced  = false;
 
 const char* persona_name(PersonaVariant v) {
@@ -37,7 +37,7 @@ PersonaVariant select_persona(const NetworkState& net) {
 
 // Returns the active_state to use when base_state == P_IDLE and no anim
 // timer is running. Uses wall-clock hour to bias toward P_SLEEP at night.
-static PersonaVariant time_of_day_idle(uint32_t now) {
+static PersonaVariant time_of_day_idle(uint64_t now) {
     time_t t = time(nullptr);
     struct tm* lt = localtime(&t);
     int h = lt->tm_hour;
@@ -77,7 +77,7 @@ bool apply_message(AppState* app, const DaemonMsg& msg) {
         using T = std::decay_t<decltype(m)>;
 
         if constexpr (std::is_same_v<T, Heartbeat>) {
-            uint32_t now = SDL_GetTicks();
+            uint64_t now = SDL_GetTicks();
             net.last_live_ms = now;
 
             if (m.running != net.running || m.waiting != net.waiting ||
@@ -172,13 +172,13 @@ bool apply_message(AppState* app, const DaemonMsg& msg) {
 // apply_tick — ANIM_TICK handler
 // --------------------------------------------------------------------
 
-bool apply_tick(AppState* app, uint32_t now) {
+bool apply_tick(AppState* app, uint64_t now) {
     NetworkState& net = app->net;
     PersonaState& persona = app->persona;
     bool changed = false;
 
     // 1. Recompute connected from staleness
-    bool conn = net.last_live_ms != 0 && (int32_t)(now - net.last_live_ms) < 30000;
+    bool conn = net.last_live_ms != 0 && (int64_t)(now - net.last_live_ms) < 30000;
     if (conn != net.connected) {
         net.connected = conn;
         if (!conn) {
@@ -207,7 +207,7 @@ bool apply_tick(AppState* app, uint32_t now) {
     if (!_napping) {
         if (persona.base_state == P_IDLE) {
             if (_idle_since_ms == 0) _idle_since_ms = now;
-            else if ((int32_t)(now - _idle_since_ms) >= (int32_t)NAP_IDLE_MS) {
+            else if ((int64_t)(now - _idle_since_ms) >= (int64_t)NAP_IDLE_MS) {
                 _napping      = true;
                 _nap_start_ms = now;
                 _idle_since_ms = 0;
@@ -220,7 +220,7 @@ bool apply_tick(AppState* app, uint32_t now) {
     } else {
         // Napping — wake on any session activity
         if (persona.base_state != P_IDLE) {
-            uint32_t nap_secs = (now - _nap_start_ms) / 1000;
+            uint32_t nap_secs = (uint32_t)((now - _nap_start_ms) / 1000);
             _napping = false;
             stats_on_nap_end(nap_secs);
             stats_on_wake(now);
@@ -228,7 +228,7 @@ bool apply_tick(AppState* app, uint32_t now) {
             changed = true;
         }
     }
-    if (persona.anim_until != 0 && (int32_t)(now - persona.anim_until) >= 0) {
+    if (persona.anim_until != 0 && (int64_t)(now - persona.anim_until) >= 0) {
         persona.anim_until = 0;
         changed = true;
     }
@@ -267,22 +267,21 @@ bool apply_key(AppState* app, int key) {
     NetworkState& net = app->net;
     PersonaState& persona = app->persona;
     UiState& ui = app->ui;
-    uint32_t now = SDL_GetTicks();
+    uint64_t now = SDL_GetTicks();
 
-    // Prompt approval/denial
     if (net.prompt_id[0] != '\0' && !net.response_sent && !ui.help_open) {
-        if (key == SDLK_y) {
+        if (key == SDLK_Y) {
             if (g_sender) g_sender(PermissionCmd{"permission", "once", net.prompt_id});
             net.response_sent = true;
-            uint32_t ms = now - net.prompt_arrived_ms;
-            stats_on_approval(ms / 1000);
+            uint64_t ms = now - net.prompt_arrived_ms;
+            stats_on_approval((uint32_t)(ms / 1000));
             if (ms < 5000) {
                 persona.active_state = P_HEART;
                 persona.anim_until   = now + 2000;
             }
             return true;
         }
-        if (key == SDLK_n) {
+        if (key == SDLK_N) {
             if (g_sender) g_sender(PermissionCmd{"permission", "deny", net.prompt_id});
             net.response_sent = true;
             stats_on_denial();
@@ -291,22 +290,22 @@ bool apply_key(AppState* app, int key) {
     }
 
     switch (key) {
-        case SDLK_h:
+        case SDLK_H:
             ui.help_open = !ui.help_open;
             return true;
         case SDLK_ESCAPE:
             if (ui.help_open) { ui.help_open = false; return true; }
             return false;
-        case SDLK_w:
+        case SDLK_W:
             ui.species_cycle = 1;
             return true;
-        case SDLK_s:
+        case SDLK_S:
             ui.species_cycle = -1;
             return true;
-        case SDLK_a:
+        case SDLK_A:
             ui.display_mode = (ui.display_mode == DISP_INFO) ? DISP_NORMAL : DISP_INFO;
             return true;
-        case SDLK_d:
+        case SDLK_D:
             ui.display_mode = (ui.display_mode == DISP_PET) ? DISP_NORMAL : DISP_PET;
             return true;
     }

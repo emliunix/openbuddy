@@ -1,9 +1,9 @@
 #pragma once
-#include <SDL.h>
+#include <SDL3/SDL.h>
 #include <stdint.h>
 #include <string>
 
-// TFT_eSPI API compatibility layer for SDL2.
+// TFT_eSPI API compatibility layer for SDL3.
 // Colors are RGB565 (16-bit) to match the reference.
 
 uint32_t rgb565_to_sdl(uint16_t c);
@@ -39,7 +39,6 @@ public:
 
 private:
     SDL_Renderer* ren_;
-    SDL_Texture* tex_;
     int w_, h_;
     uint16_t fg_;
     uint16_t bg_;

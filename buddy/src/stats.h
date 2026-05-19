@@ -23,12 +23,12 @@ void stats_init();
 void stats_on_approval(uint32_t seconds_to_respond);
 void stats_on_denial();
 uint8_t stats_mood_tier();
-uint8_t stats_energy_tier(uint32_t now_ms);
+uint8_t stats_energy_tier(uint64_t now_ms);
 uint8_t stats_fed_progress();
 bool stats_poll_level_up();
 void stats_on_bridge_tokens(uint32_t tokens);
 void stats_on_nap_end(uint32_t seconds);  // accumulate nap_seconds; call before stats_on_wake
-void stats_on_wake(uint32_t now_ms);      // reset energy to full; record wake time
+void stats_on_wake(uint64_t now_ms);      // reset energy to full; record wake time
 
 Settings& settings();
 Stats& stats();
