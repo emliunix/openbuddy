@@ -1,7 +1,6 @@
 import * as net from "net"
 import type { Event } from "@opencode-ai/sdk"
-import type { Logger } from "./logger.js"
-import { AppLogger } from "./logger.js"
+import type { Plugin } from "@opencode-ai/plugin"
 import {
     type Heartbeat,
     type TurnEvent,
@@ -15,25 +14,18 @@ const HEARTBEAT_INTERVAL_MS = 10000
 const RECONNECT_DELAY_MS = 5000
 const COMPLETED_PULSE_MS = 2000
 
-interface PluginContextLike {
-    client: {
-        app: {
-            log: (req: {
-                body: {
-                    service: string
-                    level: "debug" | "info" | "warn" | "error"
-                    message: string
-                    extra: Record<string, unknown>
-                }
-            }) => Promise<unknown>
-        }
+type LogFn = (req: {
+    body: {
+        service: string
+        level: "debug" | "info" | "warn" | "error"
+        message: string
+        extra?: Record<string, unknown>
     }
-}
+}) => Promise<unknown>
 
 export class BuddyClient {
     private socket: net.Socket | null = null
-    private ctx: PluginContextLike | null = null
-    private logger: Logger = new AppLogger()
+    private log: LogFn | null = null
     private heartbeatTimer: NodeJS.Timeout | null = null
     private reconnectTimer: NodeJS.Timeout | null = null
     private completedTimer: NodeJS.Timeout | null = null
@@ -58,76 +50,61 @@ export class BuddyClient {
         completed: false,
     }
 
-    async connect(ctx: PluginContextLike): Promise<void> {
-        this.ctx = ctx
-        ;(this.logger as AppLogger).setContext(ctx)
-        this.logger.info("BuddyClient initializing", {
-            host: BUDDY_HOST,
-            port: BUDDY_PORT,
-            heartbeatIntervalMs: HEARTBEAT_INTERVAL_MS,
-        })
+    async connect(ctx: Parameters<Plugin>[0]): Promise<void> {
+        this.log = ctx.client.app.log.bind(ctx.client.app)
         await this.doConnect()
     }
 
+    private info(message: string, extra?: Record<string, unknown>): void {
+        this.log?.({ body: { service: "openbuddy", level: "info", message, extra } })
+    }
+
+    private warn(message: string, extra?: Record<string, unknown>): void {
+        this.log?.({ body: { service: "openbuddy", level: "warn", message, extra } })
+    }
+
+    private error(message: string, extra?: Record<string, unknown>): void {
+        this.log?.({ body: { service: "openbuddy", level: "error", message, extra } })
+    }
+
+    private debug(message: string, extra?: Record<string, unknown>): void {
+        this.log?.({ body: { service: "openbuddy", level: "debug", message, extra } })
+    }
+
     private async doConnect(): Promise<void> {
-        if (this.socket) {
-            this.logger.debug("Connection already in progress or established")
-            return
-        }
+        if (this.socket) return
 
-        try {
-            this.logger.info("Attempting TCP connection to Buddy", {
-                host: BUDDY_HOST,
-                port: BUDDY_PORT,
-            })
+        this.socket = net.createConnection({
+            host: BUDDY_HOST,
+            port: BUDDY_PORT,
+        })
 
-            this.socket = net.createConnection({
-                host: BUDDY_HOST,
-                port: BUDDY_PORT,
-            })
+        this.socket.on("connect", () => {
+            this.connected = true
+            this.info("connected to buddy")
+            this.startHeartbeat()
+            this.sendConnectInfo()
+        })
 
-            this.socket.on("connect", () => {
-                this.connected = true
-                this.logger.info("TCP connection established with Buddy")
-                this.startHeartbeat()
-                this.sendConnectInfo()
-            })
+        this.socket.on("data", (data) => {
+            this.buffer += data.toString("utf-8")
+            this.processBuffer()
+        })
 
-            this.socket.on("data", (data) => {
-                const chunk = data.toString("utf-8")
-                this.logger.debug("Received raw data from Buddy", {
-                    bytes: data.length,
-                    preview: chunk.slice(0, 200),
-                })
-                this.buffer += chunk
-                this.processBuffer()
-            })
+        this.socket.on("error", (err: Error) => {
+            this.error("socket error", { error: err.message })
+        })
 
-            this.socket.on("error", (err: Error) => {
-                this.logger.error("TCP socket error", {
-                    error: err.message,
-                })
-            })
-
-            this.socket.on("close", (hadError: boolean) => {
-                const wasConnected = this.connected
-                this.connected = false
-                this.socket = null
-                this.stopHeartbeat()
-
-                this.logger.warn("TCP connection closed", {
-                    hadError,
-                    wasConnected,
-                })
-
-                this.scheduleReconnect()
-            })
-        } catch (err) {
-            this.logger.error("Failed to create TCP connection", {
-                error: (err as Error).message,
-            })
+        this.socket.on("close", (hadError: boolean) => {
+            const wasConnected = this.connected
+            this.connected = false
+            this.socket = null
+            this.stopHeartbeat()
+            if (wasConnected) {
+                this.info("disconnected from buddy", { hadError })
+            }
             this.scheduleReconnect()
-        }
+        })
     }
 
     private processBuffer(): void {
@@ -138,11 +115,10 @@ export class BuddyClient {
             if (!line.trim()) continue
             try {
                 const msg: BuddyMessage = JSON.parse(line)
-                this.logger.debug("Parsed Buddy message", { cmd: (msg as any).cmd })
                 this.handleBuddyMessage(msg)
             } catch (err) {
-                this.logger.error("Failed to parse NDJSON line from Buddy", {
-                    line: line.slice(0, 500),
+                this.error("failed to parse buddy message", {
+                    line: line.slice(0, 200),
                     error: (err as Error).message,
                 })
             }
@@ -150,81 +126,61 @@ export class BuddyClient {
     }
 
     private handleBuddyMessage(msg: BuddyMessage): void {
-        if (msg.cmd === "ping") {
-            this.logger.debug("Received ping from Buddy")
-            return
-        }
+        if (msg.cmd === "ping") return
 
         if (msg.cmd === "permission") {
             const perm = msg as { cmd: "permission"; decision: string; id: string }
-            this.logger.info("Received permission decision from Buddy", {
-                decision: perm.decision,
-                id: perm.id,
-            })
+            this.info("permission decision", { decision: perm.decision, id: perm.id })
             this.pendingPermissions.delete(perm.id)
             this.sendHeartbeat()
             return
         }
 
         if (msg.cmd === "status") {
-            this.logger.debug("Received status request from Buddy")
             this.sendStatus()
             return
         }
 
         if (msg.cmd === "name") {
-            const nameCmd = msg as { cmd: "name"; name: string }
             this.sendAck("name", true)
-            this.logger.info("Buddy name acknowledged", { name: nameCmd.name })
             return
         }
 
         if (msg.cmd === "owner") {
-            const ownerCmd = msg as { cmd: "owner"; name: string }
             this.sendAck("owner", true)
-            this.logger.info("Buddy owner acknowledged", { name: ownerCmd.name })
             return
         }
 
         if (msg.cmd === "unpair") {
             this.sendAck("unpair", true)
-            this.logger.info("Buddy unpair acknowledged")
             return
         }
 
         if (msg.cmd === "char_begin" || msg.cmd === "file" || msg.cmd === "chunk" || msg.cmd === "file_end" || msg.cmd === "char_end") {
-            this.logger.debug("Received folder push command", { cmd: msg.cmd })
             return
         }
 
-        this.logger.warn("Received unknown Buddy command", { cmd: (msg as any).cmd })
+        this.warn("unknown buddy command", { cmd: (msg as any).cmd })
     }
 
     private send(obj: unknown): boolean {
-        if (!this.socket || this.socket.destroyed) {
-            this.logger.debug("Cannot send, socket not available")
-            return false
-        }
-        const data = encodeNdjson(obj)
-        this.socket.write(data)
-        this.logger.debug("Sent to Buddy", { type: (obj as any).evt || (obj as any).cmd || "heartbeat" })
+        if (!this.socket || this.socket.destroyed) return false
+        this.socket.write(encodeNdjson(obj))
         return true
     }
 
     private sendConnectInfo(): void {
         const now = new Date()
-        const timeMsg = {
+        this.send({
             time: [
                 Math.floor(now.getTime() / 1000),
                 -now.getTimezoneOffset() * 60,
             ],
-        }
-        this.send(timeMsg)
-        this.logger.info("Sent connect info (time sync)")
+        })
     }
 
     private sendStatus(): void {
-        const ok = this.send({
+        this.send({
             ack: "status",
             data: {
                 name: "OpenBuddy",
@@ -234,9 +190,6 @@ export class BuddyClient {
             },
             ok: true,
         })
-        if (ok) {
-            this.logger.debug("Sent status response")
-        }
     }
 
     private sendAck(cmd: string, ok: boolean): void {
@@ -245,7 +198,6 @@ export class BuddyClient {
 
     private startHeartbeat(): void {
         this.stopHeartbeat()
-        this.logger.info("Starting heartbeat", { intervalMs: HEARTBEAT_INTERVAL_MS })
         this.heartbeatTimer = setInterval(() => {
             this.sendHeartbeat()
         }, HEARTBEAT_INTERVAL_MS)
@@ -256,19 +208,13 @@ export class BuddyClient {
         if (this.heartbeatTimer) {
             clearInterval(this.heartbeatTimer)
             this.heartbeatTimer = null
-            this.logger.debug("Heartbeat stopped")
         }
     }
 
     private scheduleReconnect(): void {
-        if (this.reconnectTimer) {
-            this.logger.debug("Reconnect already scheduled")
-            return
-        }
-        this.logger.info("Scheduling reconnect", { delayMs: RECONNECT_DELAY_MS })
+        if (this.reconnectTimer) return
         this.reconnectTimer = setTimeout(() => {
             this.reconnectTimer = null
-            this.logger.info("Attempting reconnect")
             this.doConnect()
         }, RECONNECT_DELAY_MS)
     }
@@ -324,21 +270,11 @@ export class BuddyClient {
             heartbeat.prompt = prompt
         }
 
-        const ok = this.send(heartbeat)
-        if (ok) {
-            this.logger.debug("Heartbeat sent", {
-                running,
-                waiting,
-                total: this.state.total,
-                completed: this.state.completed,
-                entriesCount: heartbeat.entries?.length || 0,
-            })
-        }
+        this.send(heartbeat)
+        this.debug("heartbeat sent", { running, waiting, total: this.state.total, completed: this.state.completed })
     }
 
     onEvent(event: Event): void {
-        this.logger.debug("OpenCode event received", { type: event.type })
-
         switch (event.type) {
             case "session.status": {
                 const { sessionID, status } = event.properties as { sessionID: string; status: { type: "idle" | "busy" | "retry" } }
@@ -355,11 +291,7 @@ export class BuddyClient {
                     }
                 }
 
-                this.logger.info("Session status changed", {
-                    sessionID,
-                    status: status.type,
-                    running: this.getRunningCount(),
-                })
+                this.debug("session status", { sessionID, status: status.type, running: this.getRunningCount() })
                 this.sendHeartbeat()
                 break
             }
@@ -373,17 +305,13 @@ export class BuddyClient {
                 if (wasBusy) {
                     this.setCompleted()
                 }
-                this.logger.info("Session idle", { sessionID, running: this.getRunningCount() })
                 this.sendHeartbeat()
                 break
             }
 
             case "session.created": {
                 this.state.total += 1
-                this.logger.info("Session created", {
-                    sessionID: (event.properties as any).sessionID,
-                    totalSessions: this.state.total,
-                })
+                this.debug("session created", { total: this.state.total })
                 this.sendHeartbeat()
                 break
             }
@@ -393,13 +321,11 @@ export class BuddyClient {
                 this.sessionStatuses.delete(sessionID)
                 this.pendingPermissions.delete(sessionID)
                 this.state.total = Math.max(0, this.state.total - 1)
-                this.logger.info("Session deleted", { sessionID, totalSessions: this.state.total })
                 this.sendHeartbeat()
                 break
             }
 
             case "session.updated": {
-                this.logger.debug("Session updated", { sessionID: (event.properties as any).info?.id })
                 this.sendHeartbeat()
                 break
             }
@@ -415,7 +341,6 @@ export class BuddyClient {
                         }
                     }
                 }
-                this.logger.debug("Message updated", { sessionID: msg?.sessionID, messageID: msg?.id })
                 break
             }
 
@@ -427,43 +352,24 @@ export class BuddyClient {
                         evt: "turn",
                         role: "assistant",
                     }
-                    this.logger.debug("Sending turn event to Buddy", {
-                        partID: part.id,
-                        textLength: part.text.length,
-                    })
                     this.send(turnEvent)
                 }
                 break
             }
 
             case "todo.updated": {
-                this.logger.debug("Todo updated")
                 this.sendHeartbeat()
                 break
             }
 
-            case "permission.updated": {
-                this.logger.debug("Permission updated")
+            case "permission.updated":
+            case "permission.replied":
+            case "file.edited":
+            case "command.executed":
                 break
-            }
-
-            case "permission.replied": {
-                this.logger.debug("Permission replied")
-                break
-            }
-
-            case "file.edited": {
-                this.logger.debug("File edited")
-                break
-            }
-
-            case "command.executed": {
-                this.logger.debug("Command executed")
-                break
-            }
 
             default: {
-                this.logger.debug("Unhandled event type", { type: (event as any).type })
+                this.debug("unhandled event", { type: (event as any).type })
             }
         }
     }
@@ -486,11 +392,7 @@ export class BuddyClient {
             hint: input.hint || "",
             tool: input.tool || "unknown",
         })
-        this.logger.info("Permission asked", {
-            id: input.id,
-            tool: input.tool,
-            waiting: this.pendingPermissions.size,
-        })
+        this.info("permission asked", { id: input.id, tool: input.tool })
         this.sendHeartbeat()
     }
 
@@ -500,25 +402,15 @@ export class BuddyClient {
         if (this.state.entries.length > 20) {
             this.state.entries.shift()
         }
-        this.logger.info("Tool execute started", {
-            tool: input.tool,
-            sessionID: input.sessionID,
-            callID: input.callID,
-        })
         this.sendHeartbeat()
     }
 
     onToolExecuteAfter(input: { tool: string; sessionID: string; callID: string }): void {
-        this.logger.info("Tool execute finished", {
-            tool: input.tool,
-            sessionID: input.sessionID,
-            callID: input.callID,
-        })
         this.sendHeartbeat()
     }
 
     disconnect(): void {
-        this.logger.info("Disconnecting from Buddy")
+        this.info("disconnecting")
         this.stopHeartbeat()
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer)
