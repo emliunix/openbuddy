@@ -12,6 +12,7 @@ static const uint32_t NAP_IDLE_MS   = 10UL * 60 * 1000;  // 10 minutes
 static bool     _napping        = false;
 static uint32_t _idle_since_ms  = 0;   // when continuous idle began; 0 = not tracking
 static uint32_t _nap_start_ms   = 0;   // when current nap began
+static bool     _tokens_synced  = false;
 
 const char* persona_name(PersonaVariant v) {
     static const char* names[] = {"sleep", "idle", "busy", "attention", "celebrate", "dizzy", "heart"};
@@ -89,9 +90,12 @@ bool apply_message(AppState* app, const DaemonMsg& msg) {
             if (m.tokens_today != net.tokens_today) { net.tokens_today = m.tokens_today; changed = true; }
 
             if (m.tokens != net.tokens_bridge) {
-                uint32_t delta = (m.tokens > net.tokens_bridge) ? (m.tokens - net.tokens_bridge) : 0;
+                if (!_tokens_synced) {
+                    _tokens_synced = true;
+                } else if (m.tokens > net.tokens_bridge) {
+                    stats_on_bridge_tokens(m.tokens - net.tokens_bridge);
+                }
                 net.tokens_bridge = m.tokens;
-                if (delta > 0) stats_on_bridge_tokens(delta);
                 changed = true;
             }
 

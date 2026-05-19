@@ -27,9 +27,19 @@ Upstream: `tokens_today` is reset at midnight by the plugin. `running >= 3` driv
 
 ## 2. Token accumulation (buddy-side)
 
-Upstream logic: plugin sends `tokens` = cumulative total. Buddy detects delta each heartbeat (`session.cpp:83–85`) and calls `stats_on_bridge_tokens(delta)` which accumulates into `_stats.tokens` (`stats.cpp:73–78`). Every 50 000 tokens = level up (`TOKENS_PER_LEVEL`, `stats.cpp:4`).
+Upstream logic: plugin sends `tokens` = cumulative total since the plugin started. Buddy tracks the last seen value and computes the delta per heartbeat. Only the delta is added to the buddy's lifetime counter via `stats_on_bridge_tokens(delta)` (`stats.cpp:81–86`). Every 50 000 tokens = level up (`TOKENS_PER_LEVEL`, `stats.cpp:4`).
 
-Desktop matches upstream end-to-end.
+The buddy also implements a `_tokensSynced` first-sight latch (`stats.h:76–88`):
+- On the very first heartbeat after device boot, the buddy records the plugin's cumulative total as a baseline.
+- No tokens are added on that first packet.
+- This prevents a device restart from re-crediting the entire plugin session.
+- If the plugin restarts (value drops), the buddy resyncs to the new lower baseline without adding a negative delta.
+
+`tokens_today` is sent as an absolute value and stored directly in `NetworkState` (no delta logic). It is display-only and not persisted.
+
+`tokens` (the lifetime cumulative counter) is persisted to `~/.config/openbuddy/state.json` under `stats.tokens` and restored on load. This preserves level and fed progress across buddy restarts.
+
+This delta+latch scheme relies on the device being bound to a single Claude Code app where `tokens` is monotonically non-decreasing (only reset on app restart). A multi-instance setup where different apps send independent cumulative totals would corrupt the delta tracking.
 
 ---
 
