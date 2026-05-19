@@ -4,6 +4,8 @@ Desktop companion for [OpenCode](https://opencode.ai), ported from [claude-deskt
 
 The original buddy communicates with Claude Desktop over Bluetooth Serial — a bidirectional byte stream. We preserve the same wire protocol over TCP, so the buddy remains protocol-compatible with the upstream firmware.
 
+![openbuddy](./assets/openbuddy.jpg)
+
 ## Quick Start
 
 ### 1. Build and install the plugin
