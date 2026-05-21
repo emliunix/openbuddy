@@ -48,6 +48,141 @@ function encodeNdjson(obj: unknown): string {
 }
 
 // ---------------------------------------------------------------------------
+// OpenCode event types (deterministic — absent fields are invalid)
+// ---------------------------------------------------------------------------
+
+interface SessionStatusEvent {
+    type: "session.status"
+    properties: {
+        sessionID: string
+        status: { type: "idle" | "busy" | "retry" }
+    }
+}
+
+interface SessionErrorEvent {
+    type: "session.error"
+    properties: {
+        sessionID: string
+        error: { name: string }
+    }
+}
+
+interface SessionIdleEvent {
+    type: "session.idle"
+    properties: {
+        sessionID: string
+    }
+}
+
+interface SessionCreatedEvent {
+    type: "session.created"
+    properties: {
+        info: { id: string }
+    }
+}
+
+interface SessionDeletedEvent {
+    type: "session.deleted"
+    properties: {
+        info?: { id: string }
+        sessionID?: string
+    }
+}
+
+interface SessionUpdatedEvent {
+    type: "session.updated"
+    properties: Record<string, unknown>
+}
+
+interface SessionNextStepEndedEvent {
+    type: "session.next.step.ended"
+    properties: {
+        tokens: { output: number }
+    }
+}
+
+interface MessageUpdatedEvent {
+    type: "message.updated"
+    properties: {
+        info: {
+            role: string
+            content: unknown
+        }
+    }
+}
+
+interface MessagePartUpdatedEvent {
+    type: "message.part.updated"
+    properties: {
+        part: {
+            type: string
+            text: string
+        }
+    }
+}
+
+interface TodoUpdatedEvent {
+    type: "todo.updated"
+    properties: Record<string, unknown>
+}
+
+interface PermissionRepliedEvent {
+    type: "permission.replied"
+    properties: {
+        id: string
+    }
+}
+
+interface PermissionUpdatedEvent {
+    type: "permission.updated"
+    properties: Record<string, unknown>
+}
+
+interface FileEditedEvent {
+    type: "file.edited"
+    properties: Record<string, unknown>
+}
+
+interface CommandExecutedEvent {
+    type: "command.executed"
+    properties: Record<string, unknown>
+}
+
+type Event =
+    | SessionStatusEvent
+    | SessionErrorEvent
+    | SessionIdleEvent
+    | SessionCreatedEvent
+    | SessionDeletedEvent
+    | SessionUpdatedEvent
+    | SessionNextStepEndedEvent
+    | MessageUpdatedEvent
+    | MessagePartUpdatedEvent
+    | TodoUpdatedEvent
+    | PermissionRepliedEvent
+    | PermissionUpdatedEvent
+    | FileEditedEvent
+    | CommandExecutedEvent
+    | { type: string; properties: Record<string, unknown> }
+
+// ---------------------------------------------------------------------------
+// Plugin input types
+// ---------------------------------------------------------------------------
+
+interface PermissionAskInput {
+    id: string
+    tool: string
+    hint: string
+    sessionID: string
+}
+
+interface ToolExecuteInput {
+    tool: string
+    sessionID: string
+    callID: string
+}
+
+// ---------------------------------------------------------------------------
 // BuddyClient
 // ---------------------------------------------------------------------------
 
@@ -69,7 +204,7 @@ type LogFn = (req: {
 class BuddyClient {
     private socket: net.Socket | null = null
     private log: LogFn | null = null
-    private ctx: any = null
+    private ctx: unknown = null
     private heartbeatTimer: NodeJS.Timeout | null = null
     private reconnectTimer: NodeJS.Timeout | null = null
     private completedTimer: NodeJS.Timeout | null = null
@@ -95,9 +230,10 @@ class BuddyClient {
         completed: false,
     }
 
-    async connect(ctx: any): Promise<void> {
+    async connect(ctx: unknown): Promise<void> {
         this.ctx = ctx
-        this.log = ctx.client.app.log.bind(ctx.client.app)
+        const c = ctx as { client: { app: { log: LogFn } } }
+        this.log = c.client.app.log.bind(c.client.app)
         await this.doConnect()
     }
 
@@ -175,19 +311,21 @@ class BuddyClient {
         if (msg.cmd === "ping") return
 
         if (msg.cmd === "permission") {
-            const perm = msg as { cmd: "permission"; decision: string; id: string }
+            const perm = msg as BuddyPermission
             this.info("permission decision", { decision: perm.decision, id: perm.id })
             const pp = this.pendingPermissions.get(perm.id)
             if (pp) {
                 this.pendingPermissions.delete(perm.id)
                 const response = perm.decision === "deny" ? "reject" : "once"
-                this.ctx?.client?.app?.permissions?.respond?.({
+                const c = this.ctx as { client: { app: { permissions: { respond: (req: { path: { id: string; permissionID: string }; body: { response: string } }) => Promise<unknown> } } } }
+                c.client.app.permissions.respond({
                     path: { id: pp.sessionID, permissionID: pp.permissionID },
                     body: { response },
                 }).then(() => {
                     this.info("permission relayed", { sessionID: pp.sessionID, permissionID: pp.permissionID, decision: perm.decision })
-                }).catch((err: any) => {
-                    this.error("permission relay failed", { error: err?.message || String(err) })
+                }).catch((err: unknown) => {
+                    const msg = err instanceof Error ? err.message : String(err)
+                    this.error("permission relay failed", { error: msg })
                 })
             } else {
                 this.warn("permission decision for unknown id", { id: perm.id })
@@ -220,7 +358,7 @@ class BuddyClient {
             return
         }
 
-        this.warn("unknown buddy command", { cmd: (msg as any).cmd })
+        this.warn("unknown buddy command", { cmd: msg.cmd })
     }
 
     private send(obj: unknown): boolean {
@@ -334,10 +472,10 @@ class BuddyClient {
         this.debug("heartbeat sent", { running, waiting, total: this.state.total, completed: this.state.completed })
     }
 
-    onEvent(event: any): void {
+    onEvent(event: Event): void {
         switch (event.type) {
             case "session.status": {
-                const { sessionID, status } = event.properties as { sessionID: string; status: { type: "idle" | "busy" | "retry" } }
+                const { sessionID, status } = event.properties
                 const oldStatus = this.sessionStatuses.get(sessionID)
                 this.sessionStatuses.set(sessionID, status.type)
 
@@ -346,8 +484,6 @@ class BuddyClient {
                 } else if (status.type === "idle") {
                     this.sessionStatuses.delete(sessionID)
                     this.state.currentMsg = undefined
-                    // Suppress celebrate if the session errored (abort, API failure, etc.)
-                    // or if it was retrying (retry->idle means retries exhausted, not success)
                     const errored = this.erroredSessions.has(sessionID)
                     this.erroredSessions.delete(sessionID)
                     if (!errored && oldStatus === "busy") {
@@ -361,20 +497,18 @@ class BuddyClient {
             }
 
             case "session.error": {
-                const { sessionID, error } = event.properties as { sessionID: string; error: { name: string } }
+                const { sessionID, error } = event.properties
                 this.erroredSessions.add(sessionID)
                 this.debug("session error", { sessionID, error: error.name })
                 break
             }
 
             case "session.idle": {
-                const { sessionID } = event.properties as { sessionID: string }
+                const { sessionID } = event.properties
                 const wasBusy = this.sessionStatuses.get(sessionID) === "busy"
                 this.sessionStatuses.delete(sessionID)
                 this.pendingPermissions.delete(sessionID)
                 this.state.currentMsg = undefined
-                // Suppress celebrate if the session errored (abort, API failure, etc.)
-                // or if it was retrying (retry->idle means retries exhausted, not success)
                 const errored = this.erroredSessions.has(sessionID)
                 this.erroredSessions.delete(sessionID)
                 if (!errored && wasBusy) {
@@ -392,7 +526,11 @@ class BuddyClient {
             }
 
             case "session.deleted": {
-                const sessionID = (event.properties as any).sessionID as string
+                const sessionID = event.properties.info?.id ?? event.properties.sessionID
+                if (!sessionID) {
+                    this.warn("session.deleted missing sessionID")
+                    break
+                }
                 this.sessionStatuses.delete(sessionID)
                 this.pendingPermissions.delete(sessionID)
                 this.state.total = Math.max(0, this.state.total - 1)
@@ -406,7 +544,7 @@ class BuddyClient {
             }
 
             case "session.next.step.ended": {
-                const stepTokens = event.properties?.tokens?.output ?? 0
+                const stepTokens = event.properties.tokens.output
                 if (stepTokens > 0) {
                     this.state.tokens += stepTokens
                     this.state.tokensToday += stepTokens
@@ -416,9 +554,9 @@ class BuddyClient {
             }
 
             case "message.updated": {
-                const msg = (event.properties as any).info
-                if (msg?.role === "assistant" && msg?.content) {
-                    const text = this.extractTextFromContent(msg.content)
+                const { info } = event.properties
+                if (info.role === "assistant") {
+                    const text = this.extractTextFromContent(info.content)
                     if (text) {
                         this.state.entries.push(text.slice(0, 80))
                         if (this.state.entries.length > 20) {
@@ -430,8 +568,8 @@ class BuddyClient {
             }
 
             case "message.part.updated": {
-                const part = (event.properties as any).part
-                if (part?.type === "text" && part?.text) {
+                const { part } = event.properties
+                if (part.type === "text") {
                     const turnEvent: TurnEvent = {
                         content: [{ text: part.text.slice(0, 4096), type: "text" }],
                         evt: "turn",
@@ -448,13 +586,11 @@ class BuddyClient {
             }
 
             case "permission.replied": {
-                const permId = (event.properties as any)?.id as string | undefined
-                if (permId && this.pendingPermissions.has(permId)) {
-                    this.pendingPermissions.delete(permId)
+                const { id } = event.properties
+                if (this.pendingPermissions.has(id)) {
+                    this.pendingPermissions.delete(id)
                 } else {
-                    // Fallback: FIFO removal for external replies without matching id
-                    const firstKey = this.pendingPermissions.keys().next().value as string | undefined
-                    if (firstKey) this.pendingPermissions.delete(firstKey)
+                    this.warn("permission.replied for unknown id", { id })
                 }
                 this.sendHeartbeat()
                 break
@@ -466,7 +602,7 @@ class BuddyClient {
                 break
 
             default: {
-                this.debug("unhandled event", { type: (event as any).type })
+                this.debug("unhandled event", { type: event.type })
             }
         }
     }
@@ -475,7 +611,7 @@ class BuddyClient {
         if (typeof content === "string") return content
         if (Array.isArray(content)) {
             for (const part of content) {
-                if (part?.type === "text" && part?.text) {
+                if (part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part && typeof part.text === "string") {
                     return part.text
                 }
             }
@@ -483,22 +619,20 @@ class BuddyClient {
         return undefined
     }
 
-    onPermissionAsk(input: { id?: string; tool?: string; hint?: string; sessionID?: string }): void {
-        if (!input.id) return
+    onPermissionAsk(input: PermissionAskInput): void {
         this.pendingPermissions.set(input.id, {
-            hint: input.hint || "",
-            tool: input.tool || "unknown",
-            sessionID: input.sessionID || "",
+            hint: input.hint,
+            tool: input.tool,
+            sessionID: input.sessionID,
             permissionID: input.id,
         })
         this.info("permission asked", { id: input.id, tool: input.tool, sessionID: input.sessionID })
         this.sendHeartbeat()
     }
 
-    onToolExecuteBefore(input: { tool: string; sessionID: string; callID: string }): void {
-        const sessionID = input.sessionID || "__default__"
-        if (!this.sessionStatuses.has(sessionID)) {
-            this.sessionStatuses.set(sessionID, "busy")
+    onToolExecuteBefore(input: ToolExecuteInput): void {
+        if (!this.sessionStatuses.has(input.sessionID)) {
+            this.sessionStatuses.set(input.sessionID, "busy")
         }
         const entry = `${new Date().toLocaleTimeString()} ${input.tool}`
         this.state.entries.push(entry)
@@ -508,7 +642,7 @@ class BuddyClient {
         this.sendHeartbeat()
     }
 
-    onToolExecuteAfter(input: { tool: string; sessionID: string; callID: string }): void {
+    onToolExecuteAfter(_input: ToolExecuteInput): void {
         this.sendHeartbeat()
     }
 
@@ -544,24 +678,24 @@ function getBuddyClient(): BuddyClient {
     return buddyClient
 }
 
-export const OpenBuddyPlugin = async (ctx: any) => {
+export const OpenBuddyPlugin = async (ctx: unknown) => {
     const client = getBuddyClient()
     await client.connect(ctx)
 
     return {
-        event: async ({ event }: { event: any }) => {
+        event: async ({ event }: { event: Event }) => {
             client.onEvent(event)
         },
 
-        "permission.ask": async (input: any, _output: any) => {
+        "permission.ask": async (input: PermissionAskInput, _output: unknown) => {
             client.onPermissionAsk(input)
         },
 
-        "tool.execute.before": async (input: any, _output: any) => {
+        "tool.execute.before": async (input: ToolExecuteInput, _output: unknown) => {
             client.onToolExecuteBefore(input)
         },
 
-        "tool.execute.after": async (input: any, _output: any) => {
+        "tool.execute.after": async (input: ToolExecuteInput, _output: unknown) => {
             client.onToolExecuteAfter(input)
         },
     }
