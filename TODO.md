@@ -3,6 +3,9 @@
 ## Todo
 
 - [x] **Interrupted triggers celebrate** — Ctrl-C: `session.error` → `erroredSessions` suppresses celebrate. Retry-exhausted: `oldStatus === "retry"` → no celebrate (retry→idle means failure). Ctrl-D: indistinguishable from natural completion, accepted as-is.
+- [ ] **Error tracking for interrupted session.status lost** — `session.error` handling was removed in refactor; `erroredSessions` no longer populated, so interrupted sessions celebrate incorrectly again. Need to restore `session.error` → `erroredSessions.add()` logic.
+- [ ] **Tool activity tracking removed** — `tool.execute.before` trigger removed (correctly, since it's a trigger not an event). Need to track tool calls via `message.part.updated` events or restore command formatting if entries should show recent commands.
+- [ ] **Permission approval resets info/pet view** — #BUG when a permission is approved/declined, the display is reset from info/pet view back to normal, should keep the previous state
 - [ ] **Shake support with mouse** — detect rapid mouse movement over the window as a shake gesture
 - [ ] **Persist pet stats** — save mood, energy, fed, level to `state.json` on exit; restore on launch
 

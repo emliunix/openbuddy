@@ -1,10 +1,10 @@
 import * as net from "net"
 import type {
+    Event,
     EventSessionStatus,
     EventSessionError,
     EventSessionCreated,
     EventSessionDeleted,
-    EventSessionUpdated,
     EventSessionNextStepEnded,
     EventMessageUpdated,
     EventMessagePartUpdated,
@@ -14,6 +14,8 @@ import type {
     EventFileEdited,
     EventCommandExecuted,
 } from "@opencode-ai/sdk/v2"
+
+import type { PluginInput } from "@opencode-ai/plugin"
 
 // ---------------------------------------------------------------------------
 // Protocol types
@@ -94,7 +96,7 @@ type LogFn = (req: {
 class BuddyClient {
     private socket: net.Socket | null = null
     private log: LogFn | null = null
-    private ctx: unknown = null
+    private ctx: PluginInput | null = null
     private heartbeatTimer: NodeJS.Timeout | null = null
     private reconnectTimer: NodeJS.Timeout | null = null
     private buffer = ""
@@ -121,10 +123,12 @@ class BuddyClient {
         completed: false,
     }
 
-    async connect(ctx: unknown): Promise<void> {
+    constructor(ctx: PluginInput) {
         this.ctx = ctx
-        const c = ctx as { client: { app: { log: LogFn } } }
-        this.log = c.client.app.log.bind(c.client.app)
+        this.log = ctx.client.app.log.bind(ctx.client.app)
+    }
+
+    async connect(): Promise<void> {
         await this.doConnect()
     }
 
@@ -207,23 +211,21 @@ class BuddyClient {
 
         if (msg.cmd === "permission") {
             const perm = msg as BuddyPermission
-            this.info("permission decision", { decision: perm.decision, id: perm.id })
             const pp = this.pendingPermissions.get(perm.id)
             if (pp) {
                 this.pendingPermissions.delete(perm.id)
                 const response = perm.decision === "deny" ? "reject" : "once"
-                const c = this.ctx as { client: { app: { permissions: { respond: (req: { path: { id: string; permissionID: string }; body: { response: string } }) => Promise<unknown> } } } }
-                c.client.app.permissions.respond({
+                this.debug("buddy→permission", { id: perm.id, decision: perm.decision, sessionID: pp.sessionID, remainingQueue: this.pendingPermissions.size })
+                this.ctx?.client?.postSessionIdPermissionsPermissionId({
                     path: { id: pp.sessionID, permissionID: pp.permissionID },
                     body: { response },
                 }).then(() => {
-                    this.info("permission relayed", { sessionID: pp.sessionID, permissionID: pp.permissionID, decision: perm.decision })
-                }).catch((err: unknown) => {
-                    const msg = err instanceof Error ? err.message : String(err)
-                    this.error("permission relay failed", { error: msg })
+                    this.info("permission→relayed", { sessionID: pp.sessionID, permissionID: pp.permissionID, decision: perm.decision })
+                }).catch((err: any) => {
+                    this.error("permission relay failed", { error: err?.message || String(err) })
                 })
             } else {
-                this.warn("permission decision for unknown id", { id: perm.id })
+                this.warn("buddy→permission unknown id", { id: perm.id })
             }
             this.sendHeartbeat()
             return
@@ -375,11 +377,58 @@ class BuddyClient {
             heartbeat.prompt = prompt
         }
 
+        this.debug("heartbeat", { running: heartbeat.running, waiting: heartbeat.waiting, total: heartbeat.total, completed: heartbeat.completed })
         this.send(heartbeat)
         if (this.state.completed) {
             this.state.completed = false
         }
-        this.debug("heartbeat sent", { running: this.running, waiting: this.waiting, total: this.state.total, completed: this.state.completed })
+    }
+
+    // ------------------------------------------------------------------
+    // Event dispatcher — single entrypoint for all bus events
+    // ------------------------------------------------------------------
+
+    handleEvent(event: Event): void {
+        switch (event.type) {
+            case "session.status":
+                this.handleSessionStatus({ event: event as EventSessionStatus })
+                break
+            case "session.error":
+                this.handleSessionError({ event: event as EventSessionError })
+                break
+            case "session.created":
+                this.handleSessionCreated({ event: event as EventSessionCreated })
+                break
+            case "session.deleted":
+                this.handleSessionDeleted({ event: event as EventSessionDeleted })
+                break
+            case "session.next.step.ended":
+                this.handleSessionNextStepEnded({ event: event as EventSessionNextStepEnded })
+                break
+            case "message.updated":
+                this.handleMessageUpdated({ event: event as EventMessageUpdated })
+                break
+            case "message.part.updated":
+                this.handleMessagePartUpdated({ event: event as EventMessagePartUpdated })
+                break
+            case "todo.updated":
+                this.handleTodoUpdated({ event: event as EventTodoUpdated })
+                break
+            case "permission.asked":
+                this.handlePermissionAsked({ event: event as EventPermissionAsked })
+                break
+            case "permission.replied":
+                this.handlePermissionReplied({ event: event as EventPermissionReplied })
+                break
+            case "file.edited":
+                this.handleFileEdited({ event: event as EventFileEdited })
+                break
+            case "command.executed":
+                this.handleCommandExecuted({ event: event as EventCommandExecuted })
+                break
+            default:
+                this.debug("unhandled event type", { type: (event as any).type })
+        }
     }
 
     // ------------------------------------------------------------------
@@ -389,43 +438,58 @@ class BuddyClient {
     handleSessionStatus({ event }: { event: EventSessionStatus }): void {
         const { sessionID, status } = event.properties
         const s = this.ensureSession(sessionID)
+        const wasRunning = s.running
 
         if (status.type === "busy" || status.type === "retry") {
             if (!s.running) {
                 s.running = true
-                this.info("Session running (busy)", { sessionID })
+                this.info("session→running", { sessionID, status: status.type, wasRunning, nowRunning: true, totalRunning: this.running })
                 this.sendHeartbeat()
                 return
             }
-        } else if (status.type === "idle") {
+            this.debug("session still running", { sessionID, status: status.type, running: this.running })
+            this.sendHeartbeat()
+            return
+        }
+
+        if (status.type === "idle") {
+            if (!wasRunning) {
+                this.debug("session→idle duplicate ignored", { sessionID, wasRunning, erroredSessions: this.erroredSessions.has(sessionID) })
+                return
+            }
             const errored = this.erroredSessions.has(sessionID)
             this.erroredSessions.delete(sessionID)
             this.clearPendingForSession(sessionID)
             s.running = false
             s.waiting = 0
-            if (!errored) {
+            const willComplete = !errored
+            if (willComplete) {
                 this.state.completed = true
             }
+            this.info("session→idle", { sessionID, wasRunning, errored, willComplete, totalRunning: this.running })
             this.sendHeartbeat()
             return
         }
 
-        this.debug("session status", { sessionID, status: status.type, running: this.running })
+        this.debug("session status other", { sessionID, status: (status as any).type, running: this.running })
         this.sendHeartbeat()
     }
 
     handleSessionError({ event }: { event: EventSessionError }): void {
         const { sessionID, error } = event.properties
-        if (!sessionID || !error) return
+        if (!sessionID || !error) {
+            this.debug("session.error ignored", { hasSessionID: !!sessionID, hasError: !!error })
+            return
+        }
         this.erroredSessions.add(sessionID)
-        this.debug("session error", { sessionID, error: error.name })
+        this.info("session→errored", { sessionID, errorName: error.name, errorMessage: (error as any).message })
     }
 
     handleSessionCreated({ event }: { event: EventSessionCreated }): void {
         const sessionID = event.properties.info.id
         this.state.total += 1
         this.ensureSession(sessionID)
-        this.debug("session created", { sessionID, total: this.state.total })
+        this.info("session→created", { sessionID, total: this.state.total })
         this.sendHeartbeat()
     }
 
@@ -438,28 +502,26 @@ class BuddyClient {
         this.sessionStates.delete(sessionID)
         this.clearPendingForSession(sessionID)
         this.state.total = Math.max(0, this.state.total - 1)
-        this.sendHeartbeat()
-    }
-
-    handleSessionUpdated(_input: { event: EventSessionUpdated }): void {
+        this.info("session→deleted", { sessionID, total: this.state.total })
         this.sendHeartbeat()
     }
 
     handleSessionNextStepEnded({ event }: { event: EventSessionNextStepEnded }): void {
         const stepTokens = event.properties.tokens.output
         if (stepTokens > 0) {
+            const oldTokens = this.state.tokens
             this.state.tokens += stepTokens
             this.state.tokensToday += stepTokens
-            this.debug("step tokens accumulated", { stepTokens, total: this.state.tokens })
+            this.debug("tokens→added", { stepTokens, oldTotal: oldTokens, newTotal: this.state.tokens })
         }
     }
 
     handleMessageUpdated(_input: { event: EventMessageUpdated }): void {
-        // SDK v2 AssistantMessage has no `content` field.
-        // Text arrives via message.part.updated instead.
+        this.debug("handleMessageUpdated", { type: _input.event.type })
     }
 
     handleMessagePartUpdated({ event }: { event: EventMessagePartUpdated }): void {
+        this.debug("handleMessagePartUpdated", { type: event.type })
         const { part } = event.properties
         if (part.type === "text") {
             const turnEvent: TurnEvent = {
@@ -472,6 +534,7 @@ class BuddyClient {
     }
 
     handleTodoUpdated(_input: { event: EventTodoUpdated }): void {
+        this.debug("handleTodoUpdated", { type: _input.event.type })
         this.sendHeartbeat()
     }
 
@@ -485,60 +548,64 @@ class BuddyClient {
             sessionID,
             permissionID: id,
         })
-        this.info("permission asked", { id, tool: permission, sessionID })
+        this.info("permission→asked", { id, tool: permission, sessionID, queueSize: this.pendingPermissions.size, sessionWaiting: s.waiting })
         this.sendHeartbeat()
     }
 
     handlePermissionReplied({ event }: { event: EventPermissionReplied }): void {
-        const { sessionID } = event.properties
-        this.debug("permission.replied", { sessionID })
+        const { sessionID, requestID, reply } = event.properties
         const sr = sessionID ? this.sessionStates.get(sessionID) : null
         if (sr && sr.waiting > 0) {
             sr.waiting -= 1
         }
-        // Remove first entry from queue (FIFO for external replies)
         const firstKey = this.pendingPermissions.keys().next().value as string | undefined
         if (firstKey) this.pendingPermissions.delete(firstKey)
+        this.info("permission→replied", { sessionID, requestID, reply, queueSize: this.pendingPermissions.size })
         this.sendHeartbeat()
     }
 
     handleFileEdited(_input: { event: EventFileEdited }): void {
-        // No-op
+        this.debug("handleFileEdited", { type: _input.event.type })
     }
 
     handleCommandExecuted(_input: { event: EventCommandExecuted }): void {
-        // No-op
-    }
-
-    private extractTextFromContent(content: unknown): string | undefined {
-        if (typeof content === "string") return content
-        if (Array.isArray(content)) {
-            for (const part of content) {
-                if (part && typeof part === "object" && "type" in part && part.type === "text" && "text" in part && typeof part.text === "string") {
-                    return part.text
-                }
-            }
-        }
-        return undefined
+        this.debug("handleCommandExecuted", { type: _input.event.type })
     }
 
     // ------------------------------------------------------------------
     // Named hooks
     // ------------------------------------------------------------------
 
-    handleToolExecuteBefore(input: ToolExecuteInput, _output: unknown): void {
-        const s = this.ensureSession(input.sessionID)
-        s.running = true
-        const entry = `${new Date().toLocaleTimeString()} ${input.tool}`
+    handleToolExecuteBefore(input: ToolExecuteInput, output: { args?: unknown }): void {
+        const cmd = this.formatToolCommand(input.tool, output.args)
+        const entry = `${new Date().toLocaleTimeString()} ${cmd}`
         this.state.entries.push(entry)
         if (this.state.entries.length > 20) {
             this.state.entries.shift()
         }
+        this.debug("tool→log", { tool: input.tool, sessionID: input.sessionID, entry, entriesCount: this.state.entries.length })
         this.sendHeartbeat()
     }
 
-    handleToolExecuteAfter(_input: ToolExecuteInput, _output: unknown): void {
-        this.sendHeartbeat()
+    private formatToolCommand(tool: string, args: unknown): string {
+        if (!args || typeof args !== "object") return tool
+        const a = args as Record<string, unknown>
+        switch (tool) {
+            case "bash":
+                return a.command ? `bash: ${String(a.command).slice(0, 40)}` : tool
+            case "read":
+                return a.filePath ? `read: ${String(a.filePath).replace(/.*\//, "").slice(0, 40)}` : tool
+            case "grep":
+                return a.pattern ? `grep: ${String(a.pattern).slice(0, 40)}` : tool
+            case "edit":
+                return a.filePath ? `edit: ${String(a.filePath).replace(/.*\//, "").slice(0, 40)}` : tool
+            case "write":
+                return a.filePath ? `write: ${String(a.filePath).replace(/.*\//, "").slice(0, 40)}` : tool
+            case "glob":
+                return a.pattern ? `glob: ${String(a.pattern).slice(0, 40)}` : tool
+            default:
+                return tool
+        }
     }
 
     disconnect(): void {
@@ -560,53 +627,30 @@ class BuddyClient {
 // Plugin entrypoint
 // ---------------------------------------------------------------------------
 
-let buddyClient: BuddyClient | null = null
-
-function getBuddyClient(): BuddyClient {
-    if (!buddyClient) {
-        buddyClient = new BuddyClient()
-    }
-    return buddyClient
+declare global {
+    // eslint-disable-next-line no-var
+    var __openbuddy_active_client: BuddyClient | undefined
 }
 
-export const OpenBuddyPlugin = async (ctx: unknown) => {
-    const client = getBuddyClient()
-    await client.connect(ctx)
+export const OpenBuddyPlugin = async (ctx: PluginInput) => {
+    // Disconnect old instance if exists (prevents stale heartbeats after reload)
+    const oldClient = globalThis.__openbuddy_active_client
+    if (oldClient) {
+        oldClient.disconnect()
+        globalThis.__openbuddy_active_client = undefined
+    }
+
+    const client = new BuddyClient(ctx)
+    globalThis.__openbuddy_active_client = client
+    await client.connect()
 
     return {
-        event: async ({ event }: { event: any }) => {
-            switch (event.type) {
-                case "session.status":
-                    return client.handleSessionStatus({ event })
-                case "session.error":
-                    return client.handleSessionError({ event })
-                case "session.created":
-                    return client.handleSessionCreated({ event })
-                case "session.deleted":
-                    return client.handleSessionDeleted({ event })
-                case "session.updated":
-                    return client.handleSessionUpdated({ event })
-                case "session.next.step.ended":
-                    return client.handleSessionNextStepEnded({ event })
-                case "message.updated":
-                    return client.handleMessageUpdated({ event })
-                case "message.part.updated":
-                    return client.handleMessagePartUpdated({ event })
-                case "todo.updated":
-                    return client.handleTodoUpdated({ event })
-                case "permission.asked":
-                    return client.handlePermissionAsked({ event })
-                case "permission.replied":
-                    return client.handlePermissionReplied({ event })
-                case "file.edited":
-                    return client.handleFileEdited({ event })
-                case "command.executed":
-                    return client.handleCommandExecuted({ event })
-                default:
-                    break
-            }
+        event: async ({ event }: { event: Event }) => {
+            return await client.handleEvent(event)
         },
-        "tool.execute.before": client.handleToolExecuteBefore.bind(client),
-        "tool.execute.after": client.handleToolExecuteAfter.bind(client),
+
+        "tool.execute.before": async (input: ToolExecuteInput, output: { args?: unknown }) => {
+            client.handleToolExecuteBefore(input, output)
+        },
     }
 }
