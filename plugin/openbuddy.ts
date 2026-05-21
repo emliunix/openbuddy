@@ -1,4 +1,19 @@
 import * as net from "net"
+import type {
+    EventSessionStatus,
+    EventSessionError,
+    EventSessionCreated,
+    EventSessionDeleted,
+    EventSessionUpdated,
+    EventSessionNextStepEnded,
+    EventMessageUpdated,
+    EventMessagePartUpdated,
+    EventTodoUpdated,
+    EventPermissionAsked,
+    EventPermissionReplied,
+    EventFileEdited,
+    EventCommandExecuted,
+} from "@opencode-ai/sdk/v2"
 
 // ---------------------------------------------------------------------------
 // Protocol types
@@ -46,126 +61,6 @@ type BuddyMessage = BuddyCommand | BuddyPing | BuddyPermission
 function encodeNdjson(obj: unknown): string {
     return JSON.stringify(obj) + "\n"
 }
-
-// ---------------------------------------------------------------------------
-// OpenCode event types (deterministic — absent fields are invalid)
-// ---------------------------------------------------------------------------
-
-interface SessionStatusEvent {
-    type: "session.status"
-    properties: {
-        sessionID: string
-        status: { type: "idle" | "busy" | "retry" }
-    }
-}
-
-interface SessionErrorEvent {
-    type: "session.error"
-    properties: {
-        sessionID: string
-        error: { name: string }
-    }
-}
-
-interface SessionCreatedEvent {
-    type: "session.created"
-    properties: {
-        info: { id: string }
-    }
-}
-
-interface SessionDeletedEvent {
-    type: "session.deleted"
-    properties: {
-        info?: { id: string }
-        sessionID?: string
-    }
-}
-
-interface SessionUpdatedEvent {
-    type: "session.updated"
-    properties: Record<string, unknown>
-}
-
-interface SessionNextStepEndedEvent {
-    type: "session.next.step.ended"
-    properties: {
-        tokens: { output: number }
-    }
-}
-
-interface MessageUpdatedEvent {
-    type: "message.updated"
-    properties: {
-        info: {
-            role: string
-            content: unknown
-        }
-    }
-}
-
-interface MessagePartUpdatedEvent {
-    type: "message.part.updated"
-    properties: {
-        part: {
-            type: string
-            text: string
-        }
-    }
-}
-
-interface TodoUpdatedEvent {
-    type: "todo.updated"
-    properties: Record<string, unknown>
-}
-
-interface PermissionAskedEvent {
-    type: "permission.asked"
-    properties: {
-        id: string
-        sessionID: string
-        permission: string
-        patterns: Array<string>
-    }
-}
-
-interface PermissionRepliedEvent {
-    type: "permission.replied"
-    properties: {
-        id: string
-    }
-}
-
-interface PermissionUpdatedEvent {
-    type: "permission.updated"
-    properties: Record<string, unknown>
-}
-
-interface FileEditedEvent {
-    type: "file.edited"
-    properties: Record<string, unknown>
-}
-
-interface CommandExecutedEvent {
-    type: "command.executed"
-    properties: Record<string, unknown>
-}
-
-type Event =
-    | SessionStatusEvent
-    | SessionErrorEvent
-    | SessionCreatedEvent
-    | SessionDeletedEvent
-    | SessionUpdatedEvent
-    | SessionNextStepEndedEvent
-    | MessageUpdatedEvent
-    | MessagePartUpdatedEvent
-    | TodoUpdatedEvent
-    | PermissionAskedEvent
-    | PermissionRepliedEvent
-    | PermissionUpdatedEvent
-    | FileEditedEvent
-    | CommandExecutedEvent
 
 // ---------------------------------------------------------------------------
 // Plugin hook input types
@@ -475,7 +370,7 @@ class BuddyClient {
     // Event handlers — each maps 1:1 to an OpenCode event type
     // ------------------------------------------------------------------
 
-    handleSessionStatus({ event }: { event: SessionStatusEvent }): void {
+    handleSessionStatus({ event }: { event: EventSessionStatus }): void {
         const { sessionID, status } = event.properties
         const oldStatus = this.sessionStatuses.get(sessionID)
         this.sessionStatuses.set(sessionID, status.type)
@@ -496,19 +391,20 @@ class BuddyClient {
         this.sendHeartbeat()
     }
 
-    handleSessionError({ event }: { event: SessionErrorEvent }): void {
+    handleSessionError({ event }: { event: EventSessionError }): void {
         const { sessionID, error } = event.properties
+        if (!sessionID || !error) return
         this.erroredSessions.add(sessionID)
         this.debug("session error", { sessionID, error: error.name })
     }
 
-    handleSessionCreated(_input: { event: SessionCreatedEvent }): void {
+    handleSessionCreated(_input: { event: EventSessionCreated }): void {
         this.state.total += 1
         this.debug("session created", { total: this.state.total })
         this.sendHeartbeat()
     }
 
-    handleSessionDeleted({ event }: { event: SessionDeletedEvent }): void {
+    handleSessionDeleted({ event }: { event: EventSessionDeleted }): void {
         const sessionID = event.properties.info?.id ?? event.properties.sessionID
         if (!sessionID) {
             this.warn("session.deleted missing sessionID")
@@ -520,11 +416,11 @@ class BuddyClient {
         this.sendHeartbeat()
     }
 
-    handleSessionUpdated(_input: { event: SessionUpdatedEvent }): void {
+    handleSessionUpdated(_input: { event: EventSessionUpdated }): void {
         this.sendHeartbeat()
     }
 
-    handleSessionNextStepEnded({ event }: { event: SessionNextStepEndedEvent }): void {
+    handleSessionNextStepEnded({ event }: { event: EventSessionNextStepEnded }): void {
         const stepTokens = event.properties.tokens.output
         if (stepTokens > 0) {
             this.state.tokens += stepTokens
@@ -533,20 +429,12 @@ class BuddyClient {
         }
     }
 
-    handleMessageUpdated({ event }: { event: MessageUpdatedEvent }): void {
-        const { info } = event.properties
-        if (info.role === "assistant") {
-            const text = this.extractTextFromContent(info.content)
-            if (text) {
-                this.state.entries.push(text.slice(0, 80))
-                if (this.state.entries.length > 20) {
-                    this.state.entries.shift()
-                }
-            }
-        }
+    handleMessageUpdated(_input: { event: EventMessageUpdated }): void {
+        // SDK v2 AssistantMessage has no `content` field.
+        // Text arrives via message.part.updated instead.
     }
 
-    handleMessagePartUpdated({ event }: { event: MessagePartUpdatedEvent }): void {
+    handleMessagePartUpdated({ event }: { event: EventMessagePartUpdated }): void {
         const { part } = event.properties
         if (part.type === "text") {
             const turnEvent: TurnEvent = {
@@ -558,11 +446,11 @@ class BuddyClient {
         }
     }
 
-    handleTodoUpdated(_input: { event: TodoUpdatedEvent }): void {
+    handleTodoUpdated(_input: { event: EventTodoUpdated }): void {
         this.sendHeartbeat()
     }
 
-    handlePermissionAsked({ event }: { event: PermissionAskedEvent }): void {
+    handlePermissionAsked({ event }: { event: EventPermissionAsked }): void {
         const { id, sessionID, permission, patterns } = event.properties
         this.pendingPermissions.set(id, {
             hint: patterns[0] || permission,
@@ -574,25 +462,21 @@ class BuddyClient {
         this.sendHeartbeat()
     }
 
-    handlePermissionReplied({ event }: { event: PermissionRepliedEvent }): void {
-        const { id } = event.properties
-        if (this.pendingPermissions.has(id)) {
-            this.pendingPermissions.delete(id)
+    handlePermissionReplied({ event }: { event: EventPermissionReplied }): void {
+        const { requestID } = event.properties
+        if (this.pendingPermissions.has(requestID)) {
+            this.pendingPermissions.delete(requestID)
         } else {
-            this.warn("permission.replied for unknown id", { id })
+            this.warn("permission.replied for unknown requestID", { requestID })
         }
         this.sendHeartbeat()
     }
 
-    handlePermissionUpdated(_input: { event: PermissionUpdatedEvent }): void {
+    handleFileEdited(_input: { event: EventFileEdited }): void {
         // No-op
     }
 
-    handleFileEdited(_input: { event: FileEditedEvent }): void {
-        // No-op
-    }
-
-    handleCommandExecuted(_input: { event: CommandExecutedEvent }): void {
+    handleCommandExecuted(_input: { event: EventCommandExecuted }): void {
         // No-op
     }
 
@@ -676,7 +560,6 @@ export const OpenBuddyPlugin = async (ctx: unknown) => {
         "todo.updated": client.handleTodoUpdated.bind(client),
         "permission.asked": client.handlePermissionAsked.bind(client),
         "permission.replied": client.handlePermissionReplied.bind(client),
-        "permission.updated": client.handlePermissionUpdated.bind(client),
         "file.edited": client.handleFileEdited.bind(client),
         "command.executed": client.handleCommandExecuted.bind(client),
         "tool.execute.before": client.handleToolExecuteBefore.bind(client),
