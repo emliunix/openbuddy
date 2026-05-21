@@ -8,28 +8,22 @@ The original buddy communicates with Claude Desktop over Bluetooth Serial — a 
 
 ## Quick Start
 
-### 1. Build and install the plugin
+### 1. Install the plugin
 
-The plugin is a TypeScript module that hooks into OpenCode events and sends heartbeats to the buddy window.
-
-```sh
-# build the plugin
-cd plugin
-npm install
-npm run build
-```
+The plugin is a single TypeScript file that OpenCode loads directly.
 
 Install for your **project** (per-session):
 
 ```sh
 mkdir -p .opencode/plugins
-cp plugin/dist/*.js plugin/dist/*.js.map plugin/dist/*.d.ts .opencode/plugins/
+cp plugin/openbuddy.ts .opencode/plugins/
 ```
 
 Or install **globally** (all sessions):
+
 ```sh
 mkdir -p ~/.config/opencode/plugins
-cp plugin/dist/*.js plugin/dist/*.js.map plugin/dist/*.d.ts ~/.config/opencode/plugins/
+cp plugin/openbuddy.ts ~/.config/opencode/plugins/
 ```
 
 ### 2. Build and run the buddy

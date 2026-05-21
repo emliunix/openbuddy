@@ -82,6 +82,9 @@ void AsioTransport::do_accept() {
     acceptor_.async_accept([this](std::error_code ec, asio::ip::tcp::socket socket) {
         if (ec) {
             LOG_ERROR("[transport] accept error: %s", ec.message().c_str());
+            // Re-post accept instead of bailing — the acceptor is still valid
+            // and the plugin will reconnect.
+            do_accept();
             return;
         }
 

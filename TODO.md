@@ -2,6 +2,7 @@
 
 ## Todo
 
+- [x] **Interrupted triggers celebrate** — Ctrl-C: `session.error` → `erroredSessions` suppresses celebrate. Retry-exhausted: `oldStatus === "retry"` → no celebrate (retry→idle means failure). Ctrl-D: indistinguishable from natural completion, accepted as-is.
 - [ ] **Shake support with mouse** — detect rapid mouse movement over the window as a shake gesture
 - [ ] **Persist pet stats** — save mood, energy, fed, level to `state.json` on exit; restore on launch
 

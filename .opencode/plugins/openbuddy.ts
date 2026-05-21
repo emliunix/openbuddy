@@ -1,0 +1,1 @@
+/Users/emliunix/Documents/openbuddy/plugin/openbuddy.ts
