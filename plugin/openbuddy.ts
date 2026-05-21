@@ -67,13 +67,6 @@ interface SessionErrorEvent {
     }
 }
 
-interface SessionIdleEvent {
-    type: "session.idle"
-    properties: {
-        sessionID: string
-    }
-}
-
 interface SessionCreatedEvent {
     type: "session.created"
     properties: {
@@ -161,7 +154,6 @@ interface CommandExecutedEvent {
 type Event =
     | SessionStatusEvent
     | SessionErrorEvent
-    | SessionIdleEvent
     | SessionCreatedEvent
     | SessionDeletedEvent
     | SessionUpdatedEvent
@@ -510,20 +502,6 @@ class BuddyClient {
         this.debug("session error", { sessionID, error: error.name })
     }
 
-    handleSessionIdle({ event }: { event: SessionIdleEvent }): void {
-        const { sessionID } = event.properties
-        const wasBusy = this.sessionStatuses.get(sessionID) === "busy"
-        this.sessionStatuses.delete(sessionID)
-        this.pendingPermissions.delete(sessionID)
-        this.state.currentMsg = undefined
-        const errored = this.erroredSessions.has(sessionID)
-        this.erroredSessions.delete(sessionID)
-        if (!errored && wasBusy) {
-            this.setCompleted()
-        }
-        this.sendHeartbeat()
-    }
-
     handleSessionCreated(_input: { event: SessionCreatedEvent }): void {
         this.state.total += 1
         this.debug("session created", { total: this.state.total })
@@ -689,7 +667,6 @@ export const OpenBuddyPlugin = async (ctx: unknown) => {
     return {
         "session.status": client.handleSessionStatus.bind(client),
         "session.error": client.handleSessionError.bind(client),
-        "session.idle": client.handleSessionIdle.bind(client),
         "session.created": client.handleSessionCreated.bind(client),
         "session.deleted": client.handleSessionDeleted.bind(client),
         "session.updated": client.handleSessionUpdated.bind(client),
