@@ -80,7 +80,7 @@ const BUDDY_HOST = "127.0.0.1"
 const BUDDY_PORT = 7887
 const HEARTBEAT_INTERVAL_MS = 10000
 const RECONNECT_DELAY_MS = 5000
-const COMPLETED_PULSE_MS = 2000
+
 
 type LogFn = (req: {
     body: {
@@ -97,12 +97,13 @@ class BuddyClient {
     private ctx: unknown = null
     private heartbeatTimer: NodeJS.Timeout | null = null
     private reconnectTimer: NodeJS.Timeout | null = null
-    private completedTimer: NodeJS.Timeout | null = null
     private buffer = ""
     private connected = false
 
-    private sessionStatuses = new Map<string, "idle" | "busy" | "retry">()
+    // Per-session state: {running, waiting}. Aggregates derived on heartbeat.
+    private sessionStates = new Map<string, { running: boolean; waiting: number }>()
     private erroredSessions = new Set<string>()
+    // permissionID -> metadata (for prompt display and API relay)
     private pendingPermissions = new Map<string, { hint: string; tool: string; sessionID: string; permissionID: string }>()
 
     private state: {
@@ -311,12 +312,35 @@ class BuddyClient {
         }, RECONNECT_DELAY_MS)
     }
 
-    private getRunningCount(): number {
+    private get running(): number {
         let count = 0
-        for (const status of this.sessionStatuses.values()) {
-            if (status === "busy" || status === "retry") count++
+        for (const s of this.sessionStates.values()) {
+            if (s.running) count++
         }
         return count
+    }
+
+    private get waiting(): number {
+        let count = 0
+        for (const s of this.sessionStates.values()) {
+            count += s.waiting
+        }
+        return count
+    }
+
+    private ensureSession(id: string): { running: boolean; waiting: number } {
+        if (!this.sessionStates.has(id)) {
+            this.sessionStates.set(id, { running: false, waiting: 0 })
+        }
+        return this.sessionStates.get(id)!
+    }
+
+    private clearPendingForSession(sessionID: string): void {
+        for (const [id, pp] of this.pendingPermissions) {
+            if (pp.sessionID === sessionID) {
+                this.pendingPermissions.delete(id)
+            }
+        }
     }
 
     private getCurrentPrompt(): { hint: string; id: string; tool: string } | undefined {
@@ -326,36 +350,25 @@ class BuddyClient {
         return { id, hint: perm.hint, tool: perm.tool }
     }
 
-    private setCompleted(): void {
-        this.state.completed = true
-        if (this.completedTimer) clearTimeout(this.completedTimer)
-        this.completedTimer = setTimeout(() => {
-            this.state.completed = false
-        }, COMPLETED_PULSE_MS)
-    }
-
     private sendHeartbeat(): void {
-        const running = this.getRunningCount()
-        const waiting = this.pendingPermissions.size
         const prompt = this.getCurrentPrompt()
 
         const heartbeat: Heartbeat = {
+            completed: this.state.completed,
             entries: this.state.entries.slice(-5),
-            running,
+            running: this.running,
+            tokens: this.state.tokens,
+            tokens_today: this.state.tokensToday,
             total: this.state.total,
-            waiting,
-        }
-
-        if (this.state.completed) {
-            heartbeat.completed = true
+            waiting: this.waiting,
         }
 
         if (this.state.currentMsg) {
             heartbeat.msg = this.state.currentMsg
         } else if (prompt) {
             heartbeat.msg = `approve: ${prompt.tool}`
-        } else if (running > 0) {
-            heartbeat.msg = `${running} session${running > 1 ? "s" : ""} running`
+        } else if (this.running > 0) {
+            heartbeat.msg = `${this.running} session${this.running > 1 ? "s" : ""} running`
         }
 
         if (prompt) {
@@ -363,7 +376,10 @@ class BuddyClient {
         }
 
         this.send(heartbeat)
-        this.debug("heartbeat sent", { running, waiting, total: this.state.total, completed: this.state.completed })
+        if (this.state.completed) {
+            this.state.completed = false
+        }
+        this.debug("heartbeat sent", { running: this.running, waiting: this.waiting, total: this.state.total, completed: this.state.completed })
     }
 
     // ------------------------------------------------------------------
@@ -372,22 +388,29 @@ class BuddyClient {
 
     handleSessionStatus({ event }: { event: EventSessionStatus }): void {
         const { sessionID, status } = event.properties
-        const oldStatus = this.sessionStatuses.get(sessionID)
-        this.sessionStatuses.set(sessionID, status.type)
+        const s = this.ensureSession(sessionID)
 
-        if (status.type === "busy" && oldStatus !== "busy") {
-            this.state.currentMsg = "working..."
+        if (status.type === "busy" || status.type === "retry") {
+            if (!s.running) {
+                s.running = true
+                this.info("Session running (busy)", { sessionID })
+                this.sendHeartbeat()
+                return
+            }
         } else if (status.type === "idle") {
-            this.sessionStatuses.delete(sessionID)
-            this.state.currentMsg = undefined
             const errored = this.erroredSessions.has(sessionID)
             this.erroredSessions.delete(sessionID)
-            if (!errored && oldStatus === "busy") {
-                this.setCompleted()
+            this.clearPendingForSession(sessionID)
+            s.running = false
+            s.waiting = 0
+            if (!errored) {
+                this.state.completed = true
             }
+            this.sendHeartbeat()
+            return
         }
 
-        this.debug("session status", { sessionID, status: status.type, running: this.getRunningCount() })
+        this.debug("session status", { sessionID, status: status.type, running: this.running })
         this.sendHeartbeat()
     }
 
@@ -398,9 +421,11 @@ class BuddyClient {
         this.debug("session error", { sessionID, error: error.name })
     }
 
-    handleSessionCreated(_input: { event: EventSessionCreated }): void {
+    handleSessionCreated({ event }: { event: EventSessionCreated }): void {
+        const sessionID = event.properties.info.id
         this.state.total += 1
-        this.debug("session created", { total: this.state.total })
+        this.ensureSession(sessionID)
+        this.debug("session created", { sessionID, total: this.state.total })
         this.sendHeartbeat()
     }
 
@@ -410,8 +435,8 @@ class BuddyClient {
             this.warn("session.deleted missing sessionID")
             return
         }
-        this.sessionStatuses.delete(sessionID)
-        this.pendingPermissions.delete(sessionID)
+        this.sessionStates.delete(sessionID)
+        this.clearPendingForSession(sessionID)
         this.state.total = Math.max(0, this.state.total - 1)
         this.sendHeartbeat()
     }
@@ -452,6 +477,8 @@ class BuddyClient {
 
     handlePermissionAsked({ event }: { event: EventPermissionAsked }): void {
         const { id, sessionID, permission, patterns } = event.properties
+        const s = this.ensureSession(sessionID)
+        s.waiting += 1
         this.pendingPermissions.set(id, {
             hint: patterns[0] || permission,
             tool: permission,
@@ -463,12 +490,15 @@ class BuddyClient {
     }
 
     handlePermissionReplied({ event }: { event: EventPermissionReplied }): void {
-        const { requestID } = event.properties
-        if (this.pendingPermissions.has(requestID)) {
-            this.pendingPermissions.delete(requestID)
-        } else {
-            this.warn("permission.replied for unknown requestID", { requestID })
+        const { sessionID } = event.properties
+        this.debug("permission.replied", { sessionID })
+        const sr = sessionID ? this.sessionStates.get(sessionID) : null
+        if (sr && sr.waiting > 0) {
+            sr.waiting -= 1
         }
+        // Remove first entry from queue (FIFO for external replies)
+        const firstKey = this.pendingPermissions.keys().next().value as string | undefined
+        if (firstKey) this.pendingPermissions.delete(firstKey)
         this.sendHeartbeat()
     }
 
@@ -497,9 +527,8 @@ class BuddyClient {
     // ------------------------------------------------------------------
 
     handleToolExecuteBefore(input: ToolExecuteInput, _output: unknown): void {
-        if (!this.sessionStatuses.has(input.sessionID)) {
-            this.sessionStatuses.set(input.sessionID, "busy")
-        }
+        const s = this.ensureSession(input.sessionID)
+        s.running = true
         const entry = `${new Date().toLocaleTimeString()} ${input.tool}`
         this.state.entries.push(entry)
         if (this.state.entries.length > 20) {
@@ -518,10 +547,6 @@ class BuddyClient {
         if (this.reconnectTimer) {
             clearTimeout(this.reconnectTimer)
             this.reconnectTimer = null
-        }
-        if (this.completedTimer) {
-            clearTimeout(this.completedTimer)
-            this.completedTimer = null
         }
         if (this.socket) {
             this.socket.destroy()
