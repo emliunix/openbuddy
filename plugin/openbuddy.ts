@@ -574,19 +574,38 @@ export const OpenBuddyPlugin = async (ctx: unknown) => {
     await client.connect(ctx)
 
     return {
-        "session.status": client.handleSessionStatus.bind(client),
-        "session.error": client.handleSessionError.bind(client),
-        "session.created": client.handleSessionCreated.bind(client),
-        "session.deleted": client.handleSessionDeleted.bind(client),
-        "session.updated": client.handleSessionUpdated.bind(client),
-        "session.next.step.ended": client.handleSessionNextStepEnded.bind(client),
-        "message.updated": client.handleMessageUpdated.bind(client),
-        "message.part.updated": client.handleMessagePartUpdated.bind(client),
-        "todo.updated": client.handleTodoUpdated.bind(client),
-        "permission.asked": client.handlePermissionAsked.bind(client),
-        "permission.replied": client.handlePermissionReplied.bind(client),
-        "file.edited": client.handleFileEdited.bind(client),
-        "command.executed": client.handleCommandExecuted.bind(client),
+        event: async ({ event }: { event: any }) => {
+            switch (event.type) {
+                case "session.status":
+                    return client.handleSessionStatus({ event })
+                case "session.error":
+                    return client.handleSessionError({ event })
+                case "session.created":
+                    return client.handleSessionCreated({ event })
+                case "session.deleted":
+                    return client.handleSessionDeleted({ event })
+                case "session.updated":
+                    return client.handleSessionUpdated({ event })
+                case "session.next.step.ended":
+                    return client.handleSessionNextStepEnded({ event })
+                case "message.updated":
+                    return client.handleMessageUpdated({ event })
+                case "message.part.updated":
+                    return client.handleMessagePartUpdated({ event })
+                case "todo.updated":
+                    return client.handleTodoUpdated({ event })
+                case "permission.asked":
+                    return client.handlePermissionAsked({ event })
+                case "permission.replied":
+                    return client.handlePermissionReplied({ event })
+                case "file.edited":
+                    return client.handleFileEdited({ event })
+                case "command.executed":
+                    return client.handleCommandExecuted({ event })
+                default:
+                    break
+            }
+        },
         "tool.execute.before": client.handleToolExecuteBefore.bind(client),
         "tool.execute.after": client.handleToolExecuteAfter.bind(client),
     }
