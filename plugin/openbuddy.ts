@@ -483,8 +483,8 @@ class BuddyClient {
     // Event handlers — each maps 1:1 to an OpenCode event type
     // ------------------------------------------------------------------
 
-    handleSessionStatus(event: SessionStatusEvent["properties"]): void {
-        const { sessionID, status } = event
+    handleSessionStatus({ event }: { event: SessionStatusEvent }): void {
+        const { sessionID, status } = event.properties
         const oldStatus = this.sessionStatuses.get(sessionID)
         this.sessionStatuses.set(sessionID, status.type)
 
@@ -504,14 +504,14 @@ class BuddyClient {
         this.sendHeartbeat()
     }
 
-    handleSessionError(event: SessionErrorEvent["properties"]): void {
-        const { sessionID, error } = event
+    handleSessionError({ event }: { event: SessionErrorEvent }): void {
+        const { sessionID, error } = event.properties
         this.erroredSessions.add(sessionID)
         this.debug("session error", { sessionID, error: error.name })
     }
 
-    handleSessionIdle(event: SessionIdleEvent["properties"]): void {
-        const { sessionID } = event
+    handleSessionIdle({ event }: { event: SessionIdleEvent }): void {
+        const { sessionID } = event.properties
         const wasBusy = this.sessionStatuses.get(sessionID) === "busy"
         this.sessionStatuses.delete(sessionID)
         this.pendingPermissions.delete(sessionID)
@@ -524,14 +524,14 @@ class BuddyClient {
         this.sendHeartbeat()
     }
 
-    handleSessionCreated(_event: SessionCreatedEvent["properties"]): void {
+    handleSessionCreated(_input: { event: SessionCreatedEvent }): void {
         this.state.total += 1
         this.debug("session created", { total: this.state.total })
         this.sendHeartbeat()
     }
 
-    handleSessionDeleted(event: SessionDeletedEvent["properties"]): void {
-        const sessionID = event.info?.id ?? event.sessionID
+    handleSessionDeleted({ event }: { event: SessionDeletedEvent }): void {
+        const sessionID = event.properties.info?.id ?? event.properties.sessionID
         if (!sessionID) {
             this.warn("session.deleted missing sessionID")
             return
@@ -542,12 +542,12 @@ class BuddyClient {
         this.sendHeartbeat()
     }
 
-    handleSessionUpdated(_event: SessionUpdatedEvent["properties"]): void {
+    handleSessionUpdated(_input: { event: SessionUpdatedEvent }): void {
         this.sendHeartbeat()
     }
 
-    handleSessionNextStepEnded(event: SessionNextStepEndedEvent["properties"]): void {
-        const stepTokens = event.tokens.output
+    handleSessionNextStepEnded({ event }: { event: SessionNextStepEndedEvent }): void {
+        const stepTokens = event.properties.tokens.output
         if (stepTokens > 0) {
             this.state.tokens += stepTokens
             this.state.tokensToday += stepTokens
@@ -555,8 +555,8 @@ class BuddyClient {
         }
     }
 
-    handleMessageUpdated(event: MessageUpdatedEvent["properties"]): void {
-        const { info } = event
+    handleMessageUpdated({ event }: { event: MessageUpdatedEvent }): void {
+        const { info } = event.properties
         if (info.role === "assistant") {
             const text = this.extractTextFromContent(info.content)
             if (text) {
@@ -568,8 +568,8 @@ class BuddyClient {
         }
     }
 
-    handleMessagePartUpdated(event: MessagePartUpdatedEvent["properties"]): void {
-        const { part } = event
+    handleMessagePartUpdated({ event }: { event: MessagePartUpdatedEvent }): void {
+        const { part } = event.properties
         if (part.type === "text") {
             const turnEvent: TurnEvent = {
                 content: [{ text: part.text.slice(0, 4096), type: "text" }],
@@ -580,12 +580,12 @@ class BuddyClient {
         }
     }
 
-    handleTodoUpdated(_event: TodoUpdatedEvent["properties"]): void {
+    handleTodoUpdated(_input: { event: TodoUpdatedEvent }): void {
         this.sendHeartbeat()
     }
 
-    handlePermissionAsked(event: PermissionAskedEvent["properties"]): void {
-        const { id, sessionID, permission, patterns } = event
+    handlePermissionAsked({ event }: { event: PermissionAskedEvent }): void {
+        const { id, sessionID, permission, patterns } = event.properties
         this.pendingPermissions.set(id, {
             hint: patterns[0] || permission,
             tool: permission,
@@ -596,8 +596,8 @@ class BuddyClient {
         this.sendHeartbeat()
     }
 
-    handlePermissionReplied(event: PermissionRepliedEvent["properties"]): void {
-        const { id } = event
+    handlePermissionReplied({ event }: { event: PermissionRepliedEvent }): void {
+        const { id } = event.properties
         if (this.pendingPermissions.has(id)) {
             this.pendingPermissions.delete(id)
         } else {
@@ -606,15 +606,15 @@ class BuddyClient {
         this.sendHeartbeat()
     }
 
-    handlePermissionUpdated(_event: PermissionUpdatedEvent["properties"]): void {
+    handlePermissionUpdated(_input: { event: PermissionUpdatedEvent }): void {
         // No-op
     }
 
-    handleFileEdited(_event: FileEditedEvent["properties"]): void {
+    handleFileEdited(_input: { event: FileEditedEvent }): void {
         // No-op
     }
 
-    handleCommandExecuted(_event: CommandExecutedEvent["properties"]): void {
+    handleCommandExecuted(_input: { event: CommandExecutedEvent }): void {
         // No-op
     }
 
@@ -634,7 +634,7 @@ class BuddyClient {
     // Named hooks
     // ------------------------------------------------------------------
 
-    handleToolExecuteBefore(input: ToolExecuteInput): void {
+    handleToolExecuteBefore(input: ToolExecuteInput, _output: unknown): void {
         if (!this.sessionStatuses.has(input.sessionID)) {
             this.sessionStatuses.set(input.sessionID, "busy")
         }
@@ -646,7 +646,7 @@ class BuddyClient {
         this.sendHeartbeat()
     }
 
-    handleToolExecuteAfter(_input: ToolExecuteInput): void {
+    handleToolExecuteAfter(_input: ToolExecuteInput, _output: unknown): void {
         this.sendHeartbeat()
     }
 
@@ -687,56 +687,22 @@ export const OpenBuddyPlugin = async (ctx: unknown) => {
     await client.connect(ctx)
 
     return {
-        "session.status": async ({ event }: { event: SessionStatusEvent }) => {
-            client.handleSessionStatus(event.properties)
-        },
-        "session.error": async ({ event }: { event: SessionErrorEvent }) => {
-            client.handleSessionError(event.properties)
-        },
-        "session.idle": async ({ event }: { event: SessionIdleEvent }) => {
-            client.handleSessionIdle(event.properties)
-        },
-        "session.created": async ({ event }: { event: SessionCreatedEvent }) => {
-            client.handleSessionCreated(event.properties)
-        },
-        "session.deleted": async ({ event }: { event: SessionDeletedEvent }) => {
-            client.handleSessionDeleted(event.properties)
-        },
-        "session.updated": async ({ event }: { event: SessionUpdatedEvent }) => {
-            client.handleSessionUpdated(event.properties)
-        },
-        "session.next.step.ended": async ({ event }: { event: SessionNextStepEndedEvent }) => {
-            client.handleSessionNextStepEnded(event.properties)
-        },
-        "message.updated": async ({ event }: { event: MessageUpdatedEvent }) => {
-            client.handleMessageUpdated(event.properties)
-        },
-        "message.part.updated": async ({ event }: { event: MessagePartUpdatedEvent }) => {
-            client.handleMessagePartUpdated(event.properties)
-        },
-        "todo.updated": async ({ event }: { event: TodoUpdatedEvent }) => {
-            client.handleTodoUpdated(event.properties)
-        },
-        "permission.asked": async ({ event }: { event: PermissionAskedEvent }) => {
-            client.handlePermissionAsked(event.properties)
-        },
-        "permission.replied": async ({ event }: { event: PermissionRepliedEvent }) => {
-            client.handlePermissionReplied(event.properties)
-        },
-        "permission.updated": async ({ event }: { event: PermissionUpdatedEvent }) => {
-            client.handlePermissionUpdated(event.properties)
-        },
-        "file.edited": async ({ event }: { event: FileEditedEvent }) => {
-            client.handleFileEdited(event.properties)
-        },
-        "command.executed": async ({ event }: { event: CommandExecutedEvent }) => {
-            client.handleCommandExecuted(event.properties)
-        },
-        "tool.execute.before": async (input: ToolExecuteInput, _output: unknown) => {
-            client.handleToolExecuteBefore(input)
-        },
-        "tool.execute.after": async (input: ToolExecuteInput, _output: unknown) => {
-            client.handleToolExecuteAfter(input)
-        },
+        "session.status": client.handleSessionStatus.bind(client),
+        "session.error": client.handleSessionError.bind(client),
+        "session.idle": client.handleSessionIdle.bind(client),
+        "session.created": client.handleSessionCreated.bind(client),
+        "session.deleted": client.handleSessionDeleted.bind(client),
+        "session.updated": client.handleSessionUpdated.bind(client),
+        "session.next.step.ended": client.handleSessionNextStepEnded.bind(client),
+        "message.updated": client.handleMessageUpdated.bind(client),
+        "message.part.updated": client.handleMessagePartUpdated.bind(client),
+        "todo.updated": client.handleTodoUpdated.bind(client),
+        "permission.asked": client.handlePermissionAsked.bind(client),
+        "permission.replied": client.handlePermissionReplied.bind(client),
+        "permission.updated": client.handlePermissionUpdated.bind(client),
+        "file.edited": client.handleFileEdited.bind(client),
+        "command.executed": client.handleCommandExecuted.bind(client),
+        "tool.execute.before": client.handleToolExecuteBefore.bind(client),
+        "tool.execute.after": client.handleToolExecuteAfter.bind(client),
     }
 }
